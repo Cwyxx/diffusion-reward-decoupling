@@ -1,13 +1,24 @@
 from diffusers import StableDiffusion3Pipeline
+from diffusers.pipelines.stable_diffusion_3.pipeline_stable_diffusion_3 import retrieve_timesteps, calculate_shift
+from diffusers.image_processor import PipelineImageInput
+from diffusers.callbacks import PipelineCallback, MultiPipelineCallbacks
 from torch.utils.data import DataLoader, Dataset
+from typing import Any, Callable
 import os
 import json
+import inspect
 import types
 import argparse
 import torch
 import numpy as np
 from PIL import Image
 from tqdm import tqdm
+
+try:
+    import torch_xla.core.xla_model as xm
+    XLA_AVAILABLE = True
+except ImportError:
+    XLA_AVAILABLE = False
 
 class TextPromptDataset(Dataset):
     def __init__(self, dataset_path, split="test"):
@@ -425,7 +436,7 @@ def main(args):
     # --- Load Dataset ---
     dataset_path = f"../../dataset/{args.dataset}"
     print(f"Loading dataset from: {dataset_path}")
-    dataset = TextPromptDataset(dataset_path=dataset_path, split="test")
+    dataset = TextPromptDataset(dataset_path=dataset_path, split="test")[0:10]
     dataloader = DataLoader(
         dataset,
         batch_size=1,
