@@ -494,4 +494,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(args)
     
-# python the-evolution-of-generated-images.py
+# HF_ENDPOINT=https://hf-mirror.com  CUDA_VISIBLE_DEVICES=0 python the-evolution-of-generated-images.py
