@@ -434,7 +434,7 @@ def main(args):
     pipeline.__call__ = types.MethodType(__call__, pipeline)
 
     # --- Load Dataset ---
-    dataset_path = f"../../dataset/{args.dataset}"
+    dataset_path = f"../dataset/{args.dataset}"
     print(f"Loading dataset from: {dataset_path}")
     dataset = TextPromptDataset(dataset_path=dataset_path, split="test")[0:10]
     dataloader = DataLoader(
@@ -477,12 +477,12 @@ if __name__ == "__main__":
         help="Random seed for reproducibility. Setting this ensures consistent results across runs."
     )
     parser.add_argument(
-        "--dataset", type=str, required=True, help="Dataset type."
+        "--dataset", type=str, default="HPDv3", help="Dataset type."
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="/data_center/data2/dataset/chenwy/21164-data/diffusionnft/generate_images/sd3",
+        default="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decouping/the-evoluation-of-generated-images",
         help="Directory to save evaluation results and generated images.",
     )
     parser.add_argument(
@@ -493,3 +493,5 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
     main(args)
+    
+# python the-evolution-of-generated-images.py
