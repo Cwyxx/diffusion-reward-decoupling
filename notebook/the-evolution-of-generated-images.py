@@ -26,7 +26,7 @@ class TextPromptDataset(Dataset):
         if not os.path.exists(self.file_path):
             raise FileNotFoundError(f"Dataset file not found at {self.file_path}")
         with open(self.file_path, "r") as f:
-            self.prompts = [line.strip() for line in f.readlines()]
+            self.prompts = [line.strip() for line in f.readlines()][0:10]
 
     def __len__(self):
         return len(self.prompts)
@@ -436,7 +436,7 @@ def main(args):
     # --- Load Dataset ---
     dataset_path = f"../dataset/{args.dataset}"
     print(f"Loading dataset from: {dataset_path}")
-    dataset = TextPromptDataset(dataset_path=dataset_path, split="test")[0:10]
+    dataset = TextPromptDataset(dataset_path=dataset_path, split="test")
     dataloader = DataLoader(
         dataset,
         batch_size=1,
