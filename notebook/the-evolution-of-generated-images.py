@@ -451,14 +451,15 @@ def main(args):
         prompt = prompts[0]
         idx = indices[0]
 
-        output_images_list = pipeline(
-            prompt=prompt,
-            height=args.resolution,
-            width=args.resolution,
-            num_inference_steps=args.num_inference_steps,
-            guidance_scale=args.guidance_scale,
-            generator=generator,
-        )
+        with torch.autocast(device_type="cuda", dtype=torch.float16):
+            output_images_list = pipeline(
+                prompt=prompt,
+                height=args.resolution,
+                width=args.resolution,
+                num_inference_steps=args.num_inference_steps,
+                guidance_scale=args.guidance_scale,
+                generator=generator,
+            )
 
         # Save each denoising step as an image
         prompt_dir = os.path.join(args.output_dir, f"prompt_{idx}")
