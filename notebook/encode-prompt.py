@@ -27,11 +27,11 @@ from flow_grpo.diffusers_patch.train_dreambooth_lora_sd3 import encode_prompt
 
 def main():
     parser = argparse.ArgumentParser(description="Pre-compute SD3.5 prompt embeddings")
-    parser.add_argument("--model_path", type=str, required=True)
-    parser.add_argument("--prompt_file", type=str, required=True)
-    parser.add_argument("--output_file", type=str, required=True)
+    parser.add_argument("--model_path", type=str, default="stabilityai/stable-diffusion-3.5-medium")
+    parser.add_argument("--prompt_file", type=str, default="../dataset/HPDv3/train.txt")
+    parser.add_argument("--output_file", type=str, default="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/prompt-embedding/HPDv3/train.safetensors")
     parser.add_argument("--max_sequence_length", type=int, default=128)
-    parser.add_argument("--batch_size", type=int, default=16)
+    parser.add_argument("--batch_size", type=int, default=4)
     args = parser.parse_args()
 
     dtype = torch.float16
