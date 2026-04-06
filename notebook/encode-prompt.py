@@ -18,6 +18,8 @@ Loading (lazy, only reads requested tensors into memory):
 
 import argparse
 import os
+import sys
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import torch
 from safetensors.torch import save_file
 from tqdm import tqdm
