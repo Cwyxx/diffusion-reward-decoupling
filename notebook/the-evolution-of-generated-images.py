@@ -452,7 +452,7 @@ def main(args):
         idx = indices[0]
 
         with torch.autocast(device_type="cuda", dtype=torch.float16):
-            output_images_list = pipeline(
+            output_images_list = pipeline.__call__(
                 prompt=prompt,
                 height=args.resolution,
                 width=args.resolution,
