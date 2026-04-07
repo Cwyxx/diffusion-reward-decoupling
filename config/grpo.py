@@ -279,7 +279,7 @@ def clipscore_sd3():
     return config
 
 def pickscore_sd3_fast():
-    gpu_number=32
+    gpu_number=6
     config = compressibility()
     config.dataset = os.path.join(os.getcwd(), "dataset/pickscore")
 
@@ -291,14 +291,13 @@ def pickscore_sd3_fast():
     config.sample.guidance_scale = 4.5
 
     config.resolution = 512
-    # 这里固定为1
-    config.sample.train_batch_size = 1
     config.sample.num_image_per_prompt = 24
-    config.sample.mini_num_image_per_prompt = 9
-    config.sample.num_batches_per_epoch = int(48/(gpu_number*config.sample.mini_num_image_per_prompt/config.sample.num_image_per_prompt))
-    config.sample.test_batch_size = 16 # This bs is a special design, the test set has a total of 2048, to make gpu_num*bs*n as close as possible to 2048, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
+    config.sample.mini_num_images_per_prompt = 4
+    config.sample.micro_batch_size = 1
+    config.sample.num_batches_per_epoch = int(48/(gpu_number*config.sample.mini_num_images_per_prompt/config.sample.num_image_per_prompt))
+    config.sample.test_batch_size = 16
 
-    config.train.batch_size = config.sample.mini_num_image_per_prompt
+    config.train.batch_size = config.sample.mini_num_images_per_prompt
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch//2
     config.train.num_inner_epochs = 1
     config.train.timestep_fraction = 0.99

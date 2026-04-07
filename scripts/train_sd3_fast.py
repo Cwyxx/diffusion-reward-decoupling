@@ -4,7 +4,6 @@ import os
 import datetime
 from concurrent import futures
 import time
-import json
 import hashlib
 from absl import app, flags
 from accelerate import Accelerator
@@ -14,12 +13,10 @@ from accelerate.logging import get_logger
 from diffusers import StableDiffusion3Pipeline
 from diffusers.utils.torch_utils import is_compiled_module
 import numpy as np
-import flow_grpo.prompts
 import flow_grpo.rewards
 from flow_grpo.stat_tracking import PerPromptStatTracker
 from flow_grpo.diffusers_patch.sd3_pipeline_with_logprob_fast import pipeline_with_logprob
 from flow_grpo.diffusers_patch.sd3_sde_with_logprob import sde_step_with_logprob
-from flow_grpo.diffusers_patch.train_dreambooth_lora_sd3 import encode_prompt
 import torch
 import wandb
 from functools import partial
@@ -28,6 +25,7 @@ import tempfile
 from PIL import Image
 from peft import LoraConfig, get_peft_model, set_peft_model_state_dict, PeftModel
 import random
+from safetensors import safe_open
 from torch.utils.data import Dataset, DataLoader, Sampler
 from flow_grpo.ema import EMAModuleWrapper
 
@@ -49,39 +47,21 @@ class TextPromptDataset(Dataset):
         return len(self.prompts)
     
     def __getitem__(self, idx):
-        return {"prompt": self.prompts[idx], "metadata": {}}
+        return {"prompt": self.prompts[idx], "metadata": {}, "idx": idx}
 
     @staticmethod
     def collate_fn(examples):
         prompts = [example["prompt"] for example in examples]
         metadatas = [example["metadata"] for example in examples]
-        return prompts, metadatas
-
-class GenevalPromptDataset(Dataset):
-    def __init__(self, dataset, split='train'):
-        self.file_path = os.path.join(dataset, f'{split}_metadata.jsonl')
-        with open(self.file_path, 'r', encoding='utf-8') as f:
-            self.metadatas = [json.loads(line) for line in f]
-            self.prompts = [item['prompt'] for item in self.metadatas]
-        
-    def __len__(self):
-        return len(self.prompts)
-    
-    def __getitem__(self, idx):
-        return {"prompt": self.prompts[idx], "metadata": self.metadatas[idx]}
-
-    @staticmethod
-    def collate_fn(examples):
-        prompts = [example["prompt"] for example in examples]
-        metadatas = [example["metadata"] for example in examples]
-        return prompts, metadatas
+        indices = [example["idx"] for example in examples]
+        return prompts, metadatas, indices
 
 class DistributedKRepeatSampler(Sampler):
     def __init__(self, dataset, batch_size, k, num_replicas, rank, seed=0):
         self.dataset = dataset
-        self.batch_size = batch_size  # Batch size per replica
-        self.k = k                    # Number of repetitions per sample
-        self.num_replicas = num_replicas  # Total number of replicas
+        self.batch_size = batch_size  # Batch size per replica / config.sample.train_batch_size
+        self.k = k                    # Number of repetitions per sample / config.sample.num_image_per_prompt
+        self.num_replicas = num_replicas  # Total number of replicas / accelerator.num_processes
         self.rank = rank              # Current replica rank
         self.seed = seed              # Random seed for synchronization
         
@@ -120,15 +100,6 @@ class DistributedKRepeatSampler(Sampler):
     def set_epoch(self, epoch):
         self.epoch = epoch  # Used to synchronize random state across epochs
 
-
-def compute_text_embeddings(prompt, text_encoders, tokenizers, max_sequence_length, device):
-    with torch.no_grad():
-        prompt_embeds, pooled_prompt_embeds = encode_prompt(
-            text_encoders, tokenizers, prompt, max_sequence_length
-        )
-        prompt_embeds = prompt_embeds.to(device)
-        pooled_prompt_embeds = pooled_prompt_embeds.to(device)
-    return prompt_embeds, pooled_prompt_embeds
 
 def calculate_zero_std_ratio(prompts, gathered_rewards):
     """
@@ -215,15 +186,13 @@ def compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, co
 
     return prev_sample, log_prob, prev_sample_mean, std_dev_t
 
-def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerator, global_step, reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters):
+def eval(pipeline, test_dataloader, test_embed_file, neg_prompt_embed, neg_pooled_prompt_embed, inference_dtype, config, accelerator, global_step, reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters):
     if config.train.ema:
         ema.copy_ema_to(transformer_trainable_parameters, store_temp=True)
-    neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings([""], text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device)
 
     sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.test_batch_size, 1, 1)
     sample_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(config.sample.test_batch_size, 1)
 
-    # test_dataloader = itertools.islice(test_dataloader, 2)
     all_rewards = defaultdict(list)
     for test_batch in tqdm(
             test_dataloader,
@@ -231,14 +200,9 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
             disable=not accelerator.is_local_main_process,
             position=0,
         ):
-        prompts, prompt_metadata = test_batch
-        prompt_embeds, pooled_prompt_embeds = compute_text_embeddings(
-            prompts, 
-            text_encoders, 
-            tokenizers, 
-            max_sequence_length=128, 
-            device=accelerator.device
-        )
+        prompts, prompt_metadata, indices = test_batch
+        prompt_embeds = test_embed_file.get_slice("prompt_embeds")[indices].to(inference_dtype).to(accelerator.device)
+        pooled_prompt_embeds = test_embed_file.get_slice("pooled_prompt_embeds")[indices].to(inference_dtype).to(accelerator.device)
         # The last batch may not be full batch_size
         if len(prompt_embeds)<len(sample_neg_prompt_embeds):
             sample_neg_prompt_embeds = sample_neg_prompt_embeds[:len(prompt_embeds)]
@@ -270,7 +234,7 @@ def eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerat
             all_rewards[key].append(rewards_gather)
     
     last_batch_images_gather = accelerator.gather(torch.as_tensor(images, device=accelerator.device)).cpu().numpy()
-    last_batch_prompt_ids = tokenizers[0](
+    last_batch_prompt_ids = pipeline.tokenizer(
         prompts,
         padding="max_length",
         max_length=256,
@@ -385,13 +349,12 @@ def main(_):
     )
     # freeze parameters of models to save more memory
     pipeline.vae.requires_grad_(False)
-    pipeline.text_encoder.requires_grad_(False)
-    pipeline.text_encoder_2.requires_grad_(False)
-    pipeline.text_encoder_3.requires_grad_(False)
     pipeline.transformer.requires_grad_(not config.use_lora)
 
-    text_encoders = [pipeline.text_encoder, pipeline.text_encoder_2, pipeline.text_encoder_3]
-    tokenizers = [pipeline.tokenizer, pipeline.tokenizer_2, pipeline.tokenizer_3]
+    # Unload text encoders to save VRAM (using pre-computed embeddings)
+    pipeline.text_encoder = None
+    pipeline.text_encoder_2 = None
+    pipeline.text_encoder_3 = None
 
     # disable safety checker
     pipeline.safety_checker = None
@@ -412,12 +375,9 @@ def main(_):
     elif accelerator.mixed_precision == "bf16":
         inference_dtype = torch.bfloat16
 
-    # Move vae and text_encoder to device and cast to inference_dtype
+    # Move vae to device
     pipeline.vae.to(accelerator.device, dtype=torch.float32)
-    pipeline.text_encoder.to(accelerator.device, dtype=inference_dtype)
-    pipeline.text_encoder_2.to(accelerator.device, dtype=inference_dtype)
-    pipeline.text_encoder_3.to(accelerator.device, dtype=inference_dtype)
-    
+
     pipeline.transformer.to(accelerator.device)
 
     if config.use_lora:
@@ -480,74 +440,54 @@ def main(_):
     reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn)
     eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn)
 
-    if config.prompt_fn == "general_ocr":
-        train_dataset = TextPromptDataset(config.dataset, 'train')
-        test_dataset = TextPromptDataset(config.dataset, 'test')
+    train_dataset = TextPromptDataset(config.dataset, 'train')
+    test_dataset = TextPromptDataset(config.dataset, 'val')
 
-        # Create an infinite-loop DataLoader
-        train_sampler = DistributedKRepeatSampler( 
-            dataset=train_dataset,
-            batch_size=config.sample.train_batch_size,
-            k=config.sample.num_image_per_prompt,
-            num_replicas=accelerator.num_processes,
-            rank=accelerator.process_index,
-            seed=42
-        )
+    # Open pre-computed prompt embeddings (lazy, read on demand)
+    train_embed_file = safe_open(os.path.join(config.prompt_embed_dir, "train.safetensors"), framework="pt")
+    test_embed_file = safe_open(os.path.join(config.prompt_embed_dir, "val.safetensors"), framework="pt")
 
-        # Create a DataLoader; note that shuffling is not needed here because it’s controlled by the Sampler.
-        train_dataloader = DataLoader(
-            train_dataset,
-            batch_sampler=train_sampler,
-            num_workers=1,
-            collate_fn=TextPromptDataset.collate_fn,
-            # persistent_workers=True
-        )
+    # Load negative prompt embeddings (small, just one row)
+    neg_prompt_embed_raw = train_embed_file.get_tensor("neg_prompt_embeds").to(inference_dtype)
+    neg_pooled_prompt_embed_raw = train_embed_file.get_tensor("neg_pooled_prompt_embeds").to(inference_dtype)
 
-        # Create a regular DataLoader
-        test_dataloader = DataLoader(
-            test_dataset,
-            batch_size=config.sample.test_batch_size,
-            collate_fn=TextPromptDataset.collate_fn,
-            shuffle=False,
-            num_workers=8,
-        )
-    
-    elif config.prompt_fn == "geneval":
-        train_dataset = GenevalPromptDataset(config.dataset, 'train')
-        test_dataset = GenevalPromptDataset(config.dataset, 'test')
+    mini_batch = config.sample.mini_num_images_per_prompt
+    micro_bs = config.sample.micro_batch_size
+    assert mini_batch % micro_bs == 0, f"mini_num_images_per_prompt ({mini_batch}) must be divisible by micro_batch_size ({micro_bs})"
 
-        train_sampler = DistributedKRepeatSampler( 
-            dataset=train_dataset,
-            batch_size=config.sample.train_batch_size,
-            k=config.sample.num_image_per_prompt,
-            num_replicas=accelerator.num_processes,
-            rank=accelerator.process_index,
-            seed=42
-        )
+    # Create an infinite-loop DataLoader
+    train_sampler = DistributedKRepeatSampler(
+        dataset=train_dataset,
+        batch_size=mini_batch,
+        k=config.sample.num_image_per_prompt,
+        num_replicas=accelerator.num_processes,
+        rank=accelerator.process_index,
+        seed=42
+    )
 
-        train_dataloader = DataLoader(
-            train_dataset,
-            batch_sampler=train_sampler,
-            num_workers=1,
-            collate_fn=GenevalPromptDataset.collate_fn,
-            # persistent_workers=True
-        )
-        test_dataloader = DataLoader(
-            test_dataset,
-            batch_size=config.sample.test_batch_size,
-            collate_fn=GenevalPromptDataset.collate_fn,
-            shuffle=False,
-            num_workers=8,
-        )
-    else:
-        raise NotImplementedError("Only general_ocr is supported with dataset")
+    # Create a DataLoader; note that shuffling is not needed here because it's controlled by the Sampler.
+    train_dataloader = DataLoader(
+        train_dataset,
+        batch_sampler=train_sampler,
+        num_workers=1,
+        collate_fn=TextPromptDataset.collate_fn,
+    )
 
+    # Create a regular DataLoader
+    test_dataloader = DataLoader(
+        test_dataset,
+        batch_size=config.sample.test_batch_size,
+        collate_fn=TextPromptDataset.collate_fn,
+        shuffle=False,
+        num_workers=8,
+    )
 
-    neg_prompt_embed, neg_pooled_prompt_embed = compute_text_embeddings([""], text_encoders, tokenizers, max_sequence_length=128, device=accelerator.device)
+    neg_prompt_embed = neg_prompt_embed_raw.to(accelerator.device)
+    neg_pooled_prompt_embed = neg_pooled_prompt_embed_raw.to(accelerator.device)
 
-    sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.train_batch_size, 1, 1)
+    sample_neg_prompt_embeds = neg_prompt_embed.repeat(micro_bs, 1, 1)
     train_neg_prompt_embeds = neg_prompt_embed.repeat(config.train.batch_size, 1, 1)
-    sample_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(config.sample.train_batch_size, 1)
+    sample_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(micro_bs, 1)
     train_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(config.train.batch_size, 1)
 
     if config.sample.num_image_per_prompt == 1:
@@ -570,7 +510,7 @@ def main(_):
 
     # Train!
     samples_per_epoch = (
-        config.sample.train_batch_size
+        mini_batch
         * accelerator.num_processes
         * config.sample.num_batches_per_epoch
     )
@@ -581,7 +521,7 @@ def main(_):
     )
 
     logger.info("***** Running training *****")
-    logger.info(f"  Sample batch size per device = {config.sample.train_batch_size}")
+    logger.info(f"  Sample mini_batch per device = {mini_batch} (micro_batch_size = {micro_bs})")
     logger.info(f"  Train batch size per device = {config.train.batch_size}")
     logger.info(
         f"  Gradient Accumulation steps = {config.train.gradient_accumulation_steps}"
@@ -607,7 +547,7 @@ def main(_):
         #################### EVAL ####################
         pipeline.transformer.eval()
         if epoch % config.eval_freq == 0:
-            eval(pipeline, test_dataloader, text_encoders, tokenizers, config, accelerator, global_step, eval_reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters)
+            eval(pipeline, test_dataloader, test_embed_file, neg_prompt_embed, neg_pooled_prompt_embed, inference_dtype, config, accelerator, global_step, eval_reward_fn, executor, autocast, num_train_timesteps, ema, transformer_trainable_parameters)
         if epoch % config.save_freq == 0 and epoch > 0 and accelerator.is_main_process:
             save_ckpt(config.save_dir, transformer, global_step, accelerator, ema, transformer_trainable_parameters, config)
 
@@ -622,16 +562,11 @@ def main(_):
             position=0,
         ):
             train_sampler.set_epoch(epoch * config.sample.num_batches_per_epoch + i)
-            prompts, prompt_metadata = next(train_iter)
+            prompts, prompt_metadata, indices = next(train_iter)
 
-            prompt_embeds, pooled_prompt_embeds = compute_text_embeddings(
-                prompts, 
-                text_encoders, 
-                tokenizers, 
-                max_sequence_length=128, 
-                device=accelerator.device
-            )
-            prompt_ids = tokenizers[0](
+            prompt_embeds = train_embed_file.get_slice("prompt_embeds")[indices].to(inference_dtype).to(accelerator.device)
+            pooled_prompt_embeds = train_embed_file.get_slice("pooled_prompt_embeds")[indices].to(inference_dtype).to(accelerator.device)
+            prompt_ids = pipeline.tokenizer(
                 prompts,
                 padding="max_length",
                 max_length=256,
@@ -639,36 +574,53 @@ def main(_):
                 return_tensors="pt",
             ).input_ids.to(accelerator.device)
 
-            # sample
+            # sample with serial micro-batch accumulation
             if config.sample.same_latent:
-                generator = create_generator(prompts, base_seed=epoch*10000+i)
+                all_generators = create_generator(prompts, base_seed=epoch*10000+i)
             else:
-                generator = None
-            with autocast():
-                with torch.no_grad():
-                    images, latents, log_probs, timesteps = pipeline_with_logprob(
-                        pipeline,
-                        prompt_embeds=prompt_embeds,
-                        pooled_prompt_embeds=pooled_prompt_embeds,
-                        negative_prompt_embeds=sample_neg_prompt_embeds,
-                        negative_pooled_prompt_embeds=sample_neg_pooled_prompt_embeds,
-                        num_inference_steps=config.sample.num_steps,
-                        guidance_scale=config.sample.guidance_scale,
-                        output_type="pt",
-                        height=config.resolution,
-                        width=config.resolution, 
-                        noise_level=config.sample.noise_level,
-                        generator=generator,
-                        sde_window_size=config.sample.sde_window_size,
-                        sde_window_range=config.sample.sde_window_range,
-                        sde_type=config.sample.sde_type,
-                )
+                all_generators = None
 
+            acc_images, acc_latents, acc_log_probs = [], [], []
+            for micro_idx in range(0, mini_batch, micro_bs):
+                micro_slice = slice(micro_idx, micro_idx + micro_bs)
+                micro_gen = all_generators[micro_slice] if all_generators else None
+                with autocast():
+                    with torch.no_grad():
+                        imgs_m, lats_m, lps_m, timesteps = pipeline_with_logprob(
+                            pipeline,
+                            prompt_embeds=prompt_embeds[micro_slice],
+                            pooled_prompt_embeds=pooled_prompt_embeds[micro_slice],
+                            negative_prompt_embeds=sample_neg_prompt_embeds,
+                            negative_pooled_prompt_embeds=sample_neg_pooled_prompt_embeds,
+                            num_inference_steps=config.sample.num_steps,
+                            guidance_scale=config.sample.guidance_scale,
+                            output_type="pt",
+                            height=config.resolution,
+                            width=config.resolution,
+                            noise_level=config.sample.noise_level,
+                            generator=micro_gen,
+                            sde_window_size=config.sample.sde_window_size,
+                            sde_window_range=config.sample.sde_window_range,
+                            sde_type=config.sample.sde_type,
+                        )
+                acc_images.append(imgs_m)
+                acc_latents.append(lats_m)   # list of lists
+                acc_log_probs.append(lps_m)  # list of lists
+
+            # concat micro-batch results: images (mini_batch, C, H, W)
+            images = torch.cat(acc_images, dim=0)
+            # latents: each acc_latents[r] is a list over steps, concat across micro-batches per step
+            num_lat_steps = len(acc_latents[0])
             latents = torch.stack(
-                latents, dim=1
-            )  # (batch_size, num_steps + 1, 16, 96, 96)
-            log_probs = torch.stack(log_probs, dim=1)  # shape after stack (batch_size, num_steps)
-            timesteps = torch.stack(timesteps).unsqueeze(0).repeat(config.sample.train_batch_size, 1)  # shape after stack (batch_size, num_steps)
+                [torch.cat([acc_latents[r][s] for r in range(len(acc_latents))], dim=0) for s in range(num_lat_steps)],
+                dim=1,
+            )  # (mini_batch, num_steps + 1, ...)
+            num_lp_steps = len(acc_log_probs[0])
+            log_probs = torch.stack(
+                [torch.cat([acc_log_probs[r][s] for r in range(len(acc_log_probs))], dim=0) for s in range(num_lp_steps)],
+                dim=1,
+            )  # (mini_batch, num_steps)
+            timesteps = torch.stack(timesteps).unsqueeze(0).repeat(mini_batch, 1)  # (mini_batch, num_steps)
             # compute rewards asynchronously
             rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=True)
             # yield to to make sure reward computation starts
