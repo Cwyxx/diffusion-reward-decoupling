@@ -92,6 +92,56 @@ def pickscore_score(device):
 
     return _fn
 
+def pickscore_score_remote():
+    import requests
+    from requests.adapters import HTTPAdapter, Retry
+    import pickle
+
+    url = "http://127.0.0.1:18091"
+    sess = requests.Session()
+    retries = Retry(
+        total=1000, backoff_factor=1, status_forcelist=[500], allowed_methods=False
+    )
+    sess.mount("http://", HTTPAdapter(max_retries=retries))
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        data_bytes = pickle.dumps({"images": images, "prompts": prompts})
+        response = sess.post(f"{url}/score", data=data_bytes, timeout=300)
+        response_data = pickle.loads(response.content)
+
+        return response_data["scores"], {}
+
+    return _fn
+
+def omniaid_score_remote():
+    import requests
+    from requests.adapters import HTTPAdapter, Retry
+    import pickle
+
+    url = "http://127.0.0.1:18092"
+    sess = requests.Session()
+    retries = Retry(
+        total=1000, backoff_factor=1, status_forcelist=[500], allowed_methods=False
+    )
+    sess.mount("http://", HTTPAdapter(max_retries=retries))
+
+    def _fn(images, prompts, metadata):
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+
+        data_bytes = pickle.dumps({"images": images})
+        response = sess.post(f"{url}/score", data=data_bytes, timeout=300)
+        response_data = pickle.loads(response.content)
+
+        return response_data["scores"], {}
+
+    return _fn
+
 def imagereward_score(device):
     from flow_grpo.imagereward_scorer import ImageRewardScorer
 
@@ -414,6 +464,8 @@ def multi_score(device, score_dict):
         "video_ocr": video_ocr_score,
         "imagereward": imagereward_score,
         "pickscore": pickscore_score,
+        "pickscore_remote": pickscore_score_remote,
+        "omniaid_remote": omniaid_score_remote,
         "qwenvl": qwenvl_score,
         "aesthetic": aesthetic_score,
         "jpeg_compressibility": jpeg_compressibility,
