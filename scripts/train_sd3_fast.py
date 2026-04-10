@@ -554,7 +554,7 @@ def main(_):
         #################### SAMPLING ####################
         pipeline.transformer.eval()
         samples = []
-        prompts = []
+        
         for i in tqdm(
             range(config.sample.num_batches_per_epoch),
             desc=f"Epoch {epoch}: sampling",
@@ -658,6 +658,21 @@ def main(_):
             }
 
         # collate samples into dict where each entry has shape (num_batches_per_epoch * sample.batch_size, ...)
+        # Before: samples is a list of num_batches_per_epoch dicts, each containing tensors of shape (mini_batch, ...):
+        #   samples = [
+        #       {"latents": (mini_batch, ...), "log_probs": (mini_batch, ...), "rewards": {"pickscore": (mini_batch,)}, ...},
+        #       {"latents": (mini_batch, ...), "log_probs": (mini_batch, ...), "rewards": {"pickscore": (mini_batch,)}, ...},
+        #       ...  # num_batches_per_epoch entries
+        #   ]
+        # After: samples becomes a single dict with all tensors concatenated along dim=0:
+        #   samples = {
+        #       "latents": (num_batches_per_epoch * mini_batch, ...),
+        #       "log_probs": (num_batches_per_epoch * mini_batch, ...),
+        #       "rewards": {"pickscore": (num_batches_per_epoch * mini_batch,)},
+        #       ...
+        #   }
+        # For plain tensor fields, torch.cat is applied directly.
+        # For nested dict fields (e.g. "rewards"), torch.cat is applied to each sub_key separately.
         samples = {
             k: torch.cat([s[k] for s in samples], dim=0)
             if not isinstance(samples[0][k], dict)
@@ -697,10 +712,14 @@ def main(_):
                     },
                     step=global_step,
                 )
+        # Backup the original per-image scalar reward before reshaping, so it remains accessible for logging.
         samples["rewards"]["ori_avg"] = samples["rewards"]["avg"]
-        # The purpose of repeating `adv` along the timestep dimension here is to make it easier to introduce timestep-dependent advantages later, such as adding a KL reward.
+        # Expand reward from (batch_size,) to (batch_size, num_train_timesteps) by repeating along the
+        # timestep dimension. This makes it easier to introduce timestep-dependent advantages later
+        # (e.g., adding a KL reward that varies across denoising steps).
         samples["rewards"]["avg"] = samples["rewards"]["avg"].unsqueeze(1).repeat(1, num_train_timesteps)
-        # gather rewards across processes
+        # Gather rewards from all GPUs onto every process (and move to CPU numpy), so that the
+        # subsequent per-prompt advantage computation can see all samples for the same prompt.
         gathered_rewards = {key: accelerator.gather(value) for key, value in samples["rewards"].items()}
         gathered_rewards = {key: value.cpu().numpy() for key, value in gathered_rewards.items()}
         # log rewards and images
@@ -713,18 +732,31 @@ def main(_):
                 step=global_step,
             )
 
-        # per-prompt mean/std tracking
+        # Per-prompt advantage normalization (GRPO core logic).
+        # When enabled, samples are grouped by prompt, and advantages are computed within each group:
+        #   advantage = (reward - group_mean) / (group_std + 1e-4)
+        # This means images generated from the same prompt compete against each other —
+        # those with reward above the group mean get positive advantage, below get negative.
+        # When disabled, falls back to global normalization across all samples.
         if config.per_prompt_stat_tracking:
-            # gather the prompts across processes
+            # Gather prompt_ids from all GPUs and decode back to text,
+            # so we can group samples by their prompt across all processes.
             prompt_ids = accelerator.gather(samples["prompt_ids"]).cpu().numpy()
             prompts = pipeline.tokenizer.batch_decode(
                 prompt_ids, skip_special_tokens=True
             )
+            # Compute per-prompt (per-group) advantages:
+            # for each unique prompt, normalize its rewards by the group's mean and std.
             advantages = stat_tracker.update(prompts, gathered_rewards['avg'])
             if accelerator.is_local_main_process:
                 print("len(prompts)", len(prompts))
                 print("len unique prompts", len(set(prompts)))
 
+            # Log group statistics to wandb:
+            # - group_size: average number of samples per prompt group
+            # - trained_prompt_num: total number of unique prompts seen historically
+            # - zero_std_ratio: fraction of groups where all images got the same reward (no learning signal)
+            # - reward_std_mean: average reward std across groups
             group_size, trained_prompt_num = stat_tracker.get_stats()
 
             zero_std_ratio, reward_std_mean = calculate_zero_std_ratio(prompts, gathered_rewards)
@@ -739,8 +771,10 @@ def main(_):
                     },
                     step=global_step,
                 )
+            # Clear per-epoch stats so the next epoch starts fresh.
             stat_tracker.clear()
         else:
+            # Fallback: global normalization — all samples share one mean/std, no per-prompt grouping.
             advantages = (gathered_rewards['avg'] - gathered_rewards['avg'].mean()) / (gathered_rewards['avg'].std() + 1e-4)
 
         # ungather advantages; we only need to keep the entries corresponding to the samples on this process
@@ -819,6 +853,7 @@ def main(_):
                     pooled_embeds = sample["pooled_prompt_embeds"]
 
                 train_timesteps = [step_index  for step_index in range(num_train_timesteps)]
+                train_sample_size = len(sample["latents"])
                 for j in tqdm(
                     train_timesteps,
                     desc="Timestep",
@@ -827,12 +862,46 @@ def main(_):
                     disable=not accelerator.is_local_main_process,
                 ):
                     with accelerator.accumulate(transformer):
-                        with autocast():
-                            prev_sample, log_prob, prev_sample_mean, std_dev_t = compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config)
-                            if config.train.beta > 0:
-                                with torch.no_grad():
-                                    with transformer.module.disable_adapter():
-                                        _, _, prev_sample_mean_ref, _ = compute_log_prob(transformer, pipeline, sample, j, embeds, pooled_embeds, config)
+                        # Serial micro-batch forward passes to reduce peak GPU memory,
+                        # then concat results so the loss computation remains unchanged.
+                        acc_prev_sample, acc_log_prob, acc_prev_sample_mean, acc_std_dev = [], [], [], []
+                        acc_prev_sample_mean_ref = []
+                        for micro_idx in range(0, train_sample_size, micro_bs):
+                            micro_end = micro_idx + micro_bs
+                            micro_sample = {k: v[micro_idx:micro_end] for k, v in sample.items()}
+                            if config.train.cfg:
+                                # embeds layout is [neg_0..neg_n, pos_0..pos_n], slice both halves in sync
+                                micro_embeds = torch.cat([
+                                    embeds[micro_idx:micro_end],
+                                    embeds[train_sample_size + micro_idx:train_sample_size + micro_end]
+                                ])
+                                micro_pooled = torch.cat([
+                                    pooled_embeds[micro_idx:micro_end],
+                                    pooled_embeds[train_sample_size + micro_idx:train_sample_size + micro_end]
+                                ])
+                            else:
+                                micro_embeds = embeds[micro_idx:micro_end]
+                                micro_pooled = pooled_embeds[micro_idx:micro_end]
+
+                            with autocast():
+                                ps, lp, psm, sd = compute_log_prob(transformer, pipeline, micro_sample, j, micro_embeds, micro_pooled, config)
+                                if config.train.beta > 0:
+                                    with torch.no_grad():
+                                        with transformer.module.disable_adapter():
+                                            _, _, psm_ref, _ = compute_log_prob(transformer, pipeline, micro_sample, j, micro_embeds, micro_pooled, config)
+                                    acc_prev_sample_mean_ref.append(psm_ref)
+
+                            acc_prev_sample.append(ps)
+                            acc_log_prob.append(lp)
+                            acc_prev_sample_mean.append(psm)
+                            acc_std_dev.append(sd)
+
+                        prev_sample = torch.cat(acc_prev_sample, dim=0)
+                        log_prob = torch.cat(acc_log_prob, dim=0)
+                        prev_sample_mean = torch.cat(acc_prev_sample_mean, dim=0)
+                        std_dev_t = torch.cat(acc_std_dev, dim=0)
+                        if config.train.beta > 0:
+                            prev_sample_mean_ref = torch.cat(acc_prev_sample_mean_ref, dim=0)
 
                         # grpo logic
                         advantages = torch.clamp(

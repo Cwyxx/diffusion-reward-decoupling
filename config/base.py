@@ -55,8 +55,10 @@ def get_config():
     sample.mini_num_images_per_prompt = 1
     sample.micro_batch_size = 1
     sample.test_batch_size = 1
-    # number of batches to sample per epoch. the total number of samples per epoch is `num_batches_per_epoch *
-    # batch_size * num_gpus`.
+    # Number of sampling rounds per epoch to collect enough prompt groups for training.
+    # Determined by: num_batches_per_epoch = target_groups / (train_batch_size * num_gpus / num_image_per_prompt)
+    # where target_groups is typically 48. The total number of samples per epoch is
+    # `num_batches_per_epoch * batch_size * num_gpus`.
     sample.num_batches_per_epoch = 2
     # Whether use all samples in a batch to compute std
     sample.global_std = True
