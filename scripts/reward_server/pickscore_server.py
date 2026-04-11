@@ -12,6 +12,7 @@ import argparse
 import pickle
 import traceback
 
+import logging
 import torch
 from flask import Flask, request, Blueprint
 from PIL import Image
@@ -28,6 +29,8 @@ def create_app(device="cuda", dtype=torch.float32):
 
     app = Flask(__name__)
     app.register_blueprint(root)
+    # Suppress default Flask request logs, only show errors
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
     return app
 
 
