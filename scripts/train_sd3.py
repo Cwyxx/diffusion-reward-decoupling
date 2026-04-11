@@ -194,6 +194,9 @@ def eval(pipeline, test_dataloader, test_embed_file, neg_prompt_embed, neg_poole
     if config.train.ema:
         ema.copy_ema_to(transformer_trainable_parameters, store_temp=True)
 
+    # Fix seed for eval so that the same noise is used across different checkpoints
+    eval_generator = torch.Generator(device=accelerator.device).manual_seed(42)
+
     sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.test_batch_size, 1, 1)
     sample_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(config.sample.test_batch_size, 1)
 
@@ -225,6 +228,7 @@ def eval(pipeline, test_dataloader, test_embed_file, neg_prompt_embed, neg_poole
                     height=config.resolution,
                     width=config.resolution,
                     noise_level=0,
+                    generator=eval_generator,
                 )
         rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=False)
         # yield to to make sure reward computation starts
@@ -850,10 +854,7 @@ def main(_):
                     disable=not accelerator.is_local_main_process,
                 ):
                     with accelerator.accumulate(transformer):
-                        # Serial micro-batch forward passes to reduce peak GPU memory,
-                        # then concat results so the loss computation remains unchanged.
-                        acc_prev_sample, acc_log_prob, acc_prev_sample_mean, acc_std_dev = [], [], [], []
-                        acc_prev_sample_mean_ref = []
+                        num_micro_batches = (train_sample_size + micro_bs - 1) // micro_bs
                         for micro_idx in range(0, train_sample_size, micro_bs):
                             micro_end = micro_idx + micro_bs
                             micro_sample = {k: v[micro_idx:micro_end] for k, v in sample.items()}
@@ -877,74 +878,49 @@ def main(_):
                                     with torch.no_grad():
                                         with transformer.module.disable_adapter():
                                             _, _, psm_ref, _ = compute_log_prob(transformer, pipeline, micro_sample, j, micro_embeds, micro_pooled, config)
-                                    acc_prev_sample_mean_ref.append(psm_ref)
 
-                            acc_prev_sample.append(ps)
-                            acc_log_prob.append(lp)
-                            acc_prev_sample_mean.append(psm)
-                            acc_std_dev.append(sd)
-
-                        prev_sample = torch.cat(acc_prev_sample, dim=0)
-                        log_prob = torch.cat(acc_log_prob, dim=0)
-                        prev_sample_mean = torch.cat(acc_prev_sample_mean, dim=0)
-                        std_dev_t = torch.cat(acc_std_dev, dim=0)
-                        if config.train.beta > 0:
-                            prev_sample_mean_ref = torch.cat(acc_prev_sample_mean_ref, dim=0)
-
-                        # grpo logic
-                        advantages = torch.clamp(
-                            sample["advantages"][:, j],
-                            -config.train.adv_clip_max,
-                            config.train.adv_clip_max,
-                        )
-                        ratio = torch.exp(log_prob - sample["log_probs"][:, j])
-                        unclipped_loss = -advantages * ratio
-                        clipped_loss = -advantages * torch.clamp(
-                            ratio,
-                            1.0 - config.train.clip_range,
-                            1.0 + config.train.clip_range,
-                        )
-                        policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-                        if config.train.beta > 0:
-                            kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * std_dev_t ** 2)
-                            kl_loss = torch.mean(kl_loss)
-                            loss = policy_loss + config.train.beta * kl_loss
-                        else:
-                            loss = policy_loss
-
-                        info["approx_kl"].append(
-                            0.5
-                            * torch.mean((log_prob - sample["log_probs"][:, j]) ** 2)
-                        )
-                        info["clipfrac"].append(
-                            torch.mean(
-                                (
-                                    torch.abs(ratio - 1.0) > config.train.clip_range
-                                ).float()
+                            # Compute loss per micro-batch and backward immediately to free computation graph
+                            micro_advantages = torch.clamp(
+                                micro_sample["advantages"][:, j],
+                                -config.train.adv_clip_max,
+                                config.train.adv_clip_max,
                             )
-                        )
-                        info["clipfrac_gt_one"].append(
-                            torch.mean(
-                                (
-                                    ratio - 1.0 > config.train.clip_range
-                                ).float()
+                            ratio = torch.exp(lp - micro_sample["log_probs"][:, j])
+                            unclipped_loss = -micro_advantages * ratio
+                            clipped_loss = -micro_advantages * torch.clamp(
+                                ratio,
+                                1.0 - config.train.clip_range,
+                                1.0 + config.train.clip_range,
                             )
-                        )
-                        info["clipfrac_lt_one"].append(
-                            torch.mean(
-                                (
-                                    1.0 - ratio > config.train.clip_range
-                                ).float()
+                            policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                            if config.train.beta > 0:
+                                kl_loss = ((psm - psm_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * sd ** 2)
+                                kl_loss = torch.mean(kl_loss)
+                                loss = policy_loss + config.train.beta * kl_loss
+                            else:
+                                loss = policy_loss
+
+                            # Scale loss by num_micro_batches so accumulated gradients are equivalent
+                            accelerator.backward(loss / num_micro_batches)
+
+                            # Log metrics (detached after backward, no extra memory)
+                            info["approx_kl"].append(
+                                0.5 * torch.mean((lp - micro_sample["log_probs"][:, j]) ** 2)
                             )
-                        )
-                        info["policy_loss"].append(policy_loss)
-                        if config.train.beta > 0:
-                            info["kl_loss"].append(kl_loss)
+                            info["clipfrac"].append(
+                                torch.mean((torch.abs(ratio - 1.0) > config.train.clip_range).float())
+                            )
+                            info["clipfrac_gt_one"].append(
+                                torch.mean((ratio - 1.0 > config.train.clip_range).float())
+                            )
+                            info["clipfrac_lt_one"].append(
+                                torch.mean((1.0 - ratio > config.train.clip_range).float())
+                            )
+                            info["policy_loss"].append(policy_loss)
+                            if config.train.beta > 0:
+                                info["kl_loss"].append(kl_loss)
+                            info["loss"].append(loss)
 
-                        info["loss"].append(loss)
-
-                        # backward pass
-                        accelerator.backward(loss)
                         if accelerator.sync_gradients:
                             accelerator.clip_grad_norm_(
                                 transformer.parameters(), config.train.max_grad_norm
