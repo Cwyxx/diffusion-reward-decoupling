@@ -1,8 +1,12 @@
 """PickScore reward server.
 
 Usage:
-    CUDA_VISIBLE_DEVICES=7 python scripts/reward_server/pickscore_server.py --port 18091
+    CUDA_VISIBLE_DEVICES=7 HF_ENDPOINT=https://hf-mirror.com python scripts/reward_server/pickscore_server.py --port 18091
 """
+
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 import argparse
 import pickle
