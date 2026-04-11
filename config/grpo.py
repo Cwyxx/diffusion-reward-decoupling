@@ -231,10 +231,11 @@ def pickscore_sd3():
     config.train.ema = True
     config.save_freq = 60 # epoch
     config.eval_freq = 60
-    config.save_dir = 'logs/pickscore/sd3.5-M'
+    config.save_dir = '/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/flow-grpo/sd-3-5-medium/model-ckpt'
     config.reward_fn = {
-        "pickscore": 1.0,
+        "pickscore_remote": 1.0,
     }
+    config.run_name = "pickscore"
     
     config.prompt_fn = "HPDv3"
 

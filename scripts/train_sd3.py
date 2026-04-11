@@ -18,7 +18,7 @@ from flow_grpo.stat_tracking import PerPromptStatTracker
 from flow_grpo.diffusers_patch.sd3_pipeline_with_logprob import pipeline_with_logprob
 from flow_grpo.diffusers_patch.sd3_sde_with_logprob import sde_step_with_logprob
 import torch
-import wandb
+import swanlab
 from functools import partial
 import tqdm
 import tempfile
@@ -42,6 +42,8 @@ class TextPromptDataset(Dataset):
         self.file_path = os.path.join(dataset, f'{split}.txt')
         with open(self.file_path, 'r') as f:
             self.prompts = [line.strip() for line in f.readlines()]
+        if split == 'val':
+            self.prompts = self.prompts[:120]
         
     def __len__(self):
         return len(self.prompts)
@@ -263,10 +265,10 @@ def eval(pipeline, test_dataloader, test_embed_file, neg_prompt_embed, neg_poole
             sampled_rewards = [{k: last_batch_rewards_gather[k][index] for k in last_batch_rewards_gather} for index in sample_indices]
             for key, value in all_rewards.items():
                 print(key, value.shape)
-            wandb.log(
+            swanlab.log(
                 {
                     "eval_images": [
-                        wandb.Image(
+                        swanlab.Image(
                             os.path.join(tmpdir, f"{idx}.jpg"),
                             caption=f"{prompt:.1000} | " + " | ".join(f"{k}: {v:.2f}" for k, v in reward.items() if v != -10),
                         )
@@ -299,11 +301,8 @@ def main(_):
     # basic Accelerate and logging setup
     config = FLAGS.config
 
-    unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
     if not config.run_name:
-        config.run_name = unique_id
-    else:
-        config.run_name += "_" + unique_id
+        config.run_name = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
 
     # number of timesteps within each trajectory to train on
     num_train_timesteps = int(config.sample.num_steps * config.train.timestep_fraction)
@@ -324,8 +323,10 @@ def main(_):
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
     )
     if accelerator.is_main_process:
-        wandb.init(
+        swanlab.init(
             project="flow_grpo",
+            experiment_name=config.run_name,
+            config=config.to_dict(),
         )
         # accelerator.init_trackers(
         #     project_name="flow-grpo",
@@ -693,10 +694,10 @@ def main(_):
                 sampled_prompts = [prompts[i] for i in sample_indices]
                 sampled_rewards = [rewards['avg'][i] for i in sample_indices]
 
-                wandb.log(
+                swanlab.log(
                     {
                         "images": [
-                            wandb.Image(
+                            swanlab.Image(
                                 os.path.join(tmpdir, f"{idx}.jpg"),
                                 caption=f"{prompt:.100} | avg: {avg_reward:.2f}",
                             )
@@ -718,7 +719,7 @@ def main(_):
         gathered_rewards = {key: value.cpu().numpy() for key, value in gathered_rewards.items()}
         # log rewards and images
         if accelerator.is_main_process:
-            wandb.log(
+            swanlab.log(
                 {
                     "epoch": epoch,
                     **{f"reward_{key}": value.mean() for key, value in gathered_rewards.items() if '_strict_accuracy' not in key and '_accuracy' not in key},
@@ -743,7 +744,7 @@ def main(_):
             zero_std_ratio, reward_std_mean = calculate_zero_std_ratio(prompts, gathered_rewards)
 
             if accelerator.is_main_process:
-                wandb.log(
+                swanlab.log(
                     {
                         "group_size": group_size,
                         "trained_prompt_num": trained_prompt_num,
@@ -782,7 +783,7 @@ def main(_):
                 random_indices = torch.randperm(len(false_indices))[:num_to_change]
                 mask[false_indices[random_indices]] = True
         if accelerator.is_main_process:
-            wandb.log(
+            swanlab.log(
                 {
                     "actual_batch_size": mask.sum().item()//config.sample.num_batches_per_epoch,
                 },
@@ -958,7 +959,7 @@ def main(_):
                         info = accelerator.reduce(info, reduction="mean")
                         info.update({"epoch": epoch, "inner_epoch": inner_epoch})
                         if accelerator.is_main_process:
-                            wandb.log(info, step=global_step)
+                            swanlab.log(info, step=global_step)
                         global_step += 1
                         info = defaultdict(list)
                 if config.train.ema:
