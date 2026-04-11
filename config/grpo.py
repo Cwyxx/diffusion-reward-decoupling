@@ -203,9 +203,9 @@ def geneval_sd3_fast_nocfg():
     return config
 
 def pickscore_sd3():
-    gpu_number=32
+    gpu_number=6
     config = compressibility()
-    config.dataset = os.path.join(os.getcwd(), "dataset/pickscore")
+    config.dataset = os.path.join(os.getcwd(), "dataset/HPDv3")
 
     # sd3.5 medium
     config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
@@ -214,13 +214,14 @@ def pickscore_sd3():
     config.sample.guidance_scale = 4.5
 
     config.resolution = 512
-    config.sample.train_batch_size = 9
+    config.sample.mini_num_images_per_prompt = 4
+    config.sample.micro_batch_size = 1
     config.sample.num_image_per_prompt = 24
-    config.sample.num_batches_per_epoch = int(48/(gpu_number*config.sample.train_batch_size/config.sample.num_image_per_prompt))
+    config.sample.num_batches_per_epoch = int(48/(gpu_number*config.sample.mini_num_images_per_prompt/config.sample.num_image_per_prompt))
     assert config.sample.num_batches_per_epoch % 2 == 0, "Please set config.sample.num_batches_per_epoch to an even number! This ensures that config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch / 2, so that gradients are updated twice per epoch."
-    config.sample.test_batch_size = 16 # This bs is a special design, the test set has a total of 2048, to make gpu_num*bs*n as close as possible to 2048, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
+    config.sample.test_batch_size = 1 # This bs is a special design, the test set has a total of 2048, to make gpu_num*bs*n as close as possible to 2048, because when the number of samples cannot be divided evenly by the number of cards, multi-card will fill the last batch to ensure each card has the same number of samples, affecting gradient synchronization.
 
-    config.train.batch_size = config.sample.train_batch_size
+    config.train.batch_size = config.sample.mini_num_images_per_prompt
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch//2
     config.train.num_inner_epochs = 1
     config.train.timestep_fraction = 0.99
@@ -235,9 +236,27 @@ def pickscore_sd3():
         "pickscore": 1.0,
     }
     
-    config.prompt_fn = "general_ocr"
+    config.prompt_fn = "HPDv3"
 
     config.per_prompt_stat_tracking = True
+    return config
+
+def pickscore_sd3_decoupled_reward():
+    config = pickscore_sd3()
+
+    config.reward_decoupled = True
+    # Early denoising steps: focus on aesthetic quality (global structure, color, composition)
+    config.reward_fn_early = {
+        "aesthetic": 1.0,
+    }
+    # Late denoising steps: focus on text-image alignment (details, semantics)
+    config.reward_fn_late = {
+        "pickscore": 1.0,
+    }
+    # First 50% steps use early reward, remaining 50% use late reward
+    config.reward_split_ratio = 0.5
+
+    config.save_dir = 'logs/pickscore_decoupled/sd3.5-M'
     return config
 
 def clipscore_sd3():
@@ -281,7 +300,7 @@ def clipscore_sd3():
 def pickscore_sd3_fast():
     gpu_number=6
     config = compressibility()
-    config.dataset = os.path.join(os.getcwd(), "dataset/pickscore")
+    config.dataset = os.path.join(os.getcwd(), "dataset/HPDv3")
 
     # sd3.5 medium
     config.pretrained.model = "stabilityai/stable-diffusion-3.5-medium"
@@ -295,7 +314,7 @@ def pickscore_sd3_fast():
     config.sample.mini_num_images_per_prompt = 4
     config.sample.micro_batch_size = 1
     config.sample.num_batches_per_epoch = int(48/(gpu_number*config.sample.mini_num_images_per_prompt/config.sample.num_image_per_prompt))
-    config.sample.test_batch_size = 16
+    config.sample.test_batch_size = 1
 
     config.train.batch_size = config.sample.mini_num_images_per_prompt
     config.train.gradient_accumulation_steps = config.sample.num_batches_per_epoch//2
@@ -313,7 +332,7 @@ def pickscore_sd3_fast():
         "pickscore": 1.0,
     }
     
-    config.prompt_fn = "general_ocr"
+    config.prompt_fn = "HPDv3"
 
     config.per_prompt_stat_tracking = True
     return config

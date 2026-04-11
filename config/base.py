@@ -126,6 +126,16 @@ def get_config():
     config.reward_fn = ml_collections.ConfigDict()
     config.save_dir = ''
 
+    ###### Decoupled Reward ######
+    # When enabled, two separate reward models are used for different denoising stages.
+    # Early timesteps use reward_fn_early, late timesteps use reward_fn_late.
+    config.reward_decoupled = False
+    config.reward_fn_early = ml_collections.ConfigDict()
+    config.reward_fn_late = ml_collections.ConfigDict()
+    # Fraction of timesteps assigned to the early reward model (0.0~1.0).
+    # e.g. 0.5 means the first 50% steps use reward_fn_early, the rest use reward_fn_late.
+    config.reward_split_ratio = 0.5
+
     ###### Per-Prompt Stat Tracking ######
     config.per_prompt_stat_tracking = True
 
