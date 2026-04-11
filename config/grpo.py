@@ -232,6 +232,7 @@ def pickscore_sd3():
     config.save_freq = 60 # epoch
     config.eval_freq = 60
     config.save_dir = '/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/flow-grpo/sd-3-5-medium/model-ckpt'
+    config.prompt_embed_dir = "/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/prompt-embedding/HPDv3"
     config.reward_fn = {
         "pickscore_remote": 1.0,
     }
