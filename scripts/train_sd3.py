@@ -903,23 +903,23 @@ def main(_):
                             # Scale loss by num_micro_batches so accumulated gradients are equivalent
                             accelerator.backward(loss / num_micro_batches)
 
-                            # Log metrics (detached after backward, no extra memory)
+                            # Log metrics — detach to release computation graph
                             info["approx_kl"].append(
-                                0.5 * torch.mean((lp - micro_sample["log_probs"][:, j]) ** 2)
+                                (0.5 * torch.mean((lp - micro_sample["log_probs"][:, j]) ** 2)).detach()
                             )
                             info["clipfrac"].append(
-                                torch.mean((torch.abs(ratio - 1.0) > config.train.clip_range).float())
+                                torch.mean((torch.abs(ratio - 1.0) > config.train.clip_range).float()).detach()
                             )
                             info["clipfrac_gt_one"].append(
-                                torch.mean((ratio - 1.0 > config.train.clip_range).float())
+                                torch.mean((ratio - 1.0 > config.train.clip_range).float()).detach()
                             )
                             info["clipfrac_lt_one"].append(
-                                torch.mean((1.0 - ratio > config.train.clip_range).float())
+                                torch.mean((1.0 - ratio > config.train.clip_range).float()).detach()
                             )
-                            info["policy_loss"].append(policy_loss)
+                            info["policy_loss"].append(policy_loss.detach())
                             if config.train.beta > 0:
-                                info["kl_loss"].append(kl_loss)
-                            info["loss"].append(loss)
+                                info["kl_loss"].append(kl_loss.detach())
+                            info["loss"].append(loss.detach())
 
                         if accelerator.sync_gradients:
                             accelerator.clip_grad_norm_(
