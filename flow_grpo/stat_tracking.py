@@ -9,23 +9,39 @@ class PerPromptStatTracker:
         self.history_prompts = set()
 
     def update(self, prompts, rewards, type='grpo'):
+        """Compute per-prompt normalized advantages.
+
+        Args:
+            prompts: list of N prompt strings (same prompt appears multiple times due to num_image_per_prompt)
+            rewards: (N,) or (N, num_train_timesteps) array of rewards
+            type: 'grpo' | 'rwr' | 'sft' | 'dpo'
+
+        Returns:
+            advantages: same shape as rewards, normalized per-prompt (and per-timestep if 2D)
+        """
         prompts = np.array(prompts)
         rewards = np.array(rewards, dtype=np.float64)
         unique = np.unique(prompts)
         advantages = np.empty_like(rewards)*0.0
+        # First pass: accumulate rewards for each prompt
         for prompt in unique:
             prompt_rewards = rewards[prompts == prompt]
             if prompt not in self.stats:
                 self.stats[prompt] = []
             self.stats[prompt].extend(prompt_rewards)
-            self.history_prompts.add(hash(prompt))  # Add hash of prompt to history_prompts
+            self.history_prompts.add(hash(prompt))
+        # Second pass: compute advantages using per-prompt statistics
+        # axis=0 computes mean/std across samples, independently for each timestep
         for prompt in unique:
             self.stats[prompt] = np.stack(self.stats[prompt])
-            prompt_rewards = rewards[prompts == prompt]  # Fix: Recalculate prompt_rewards for each prompt
+            prompt_rewards = rewards[prompts == prompt]
+            # mean shape: (1,) or (1, num_train_timesteps), per-prompt mean for each timestep
             mean = np.mean(self.stats[prompt], axis=0, keepdims=True)
             if self.global_std:
-                std = np.std(rewards, axis=0, keepdims=True) + 1e-4  # Use global std of all rewards
+                # std across ALL samples in this batch (all prompts), per-timestep
+                std = np.std(rewards, axis=0, keepdims=True) + 1e-4
             else:
+                # std across samples of this specific prompt only, per-timestep
                 std = np.std(self.stats[prompt], axis=0, keepdims=True) + 1e-4
             if type=='grpo':
                 advantages[prompts == prompt] = (prompt_rewards - mean) / std

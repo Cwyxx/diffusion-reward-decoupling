@@ -1,6 +1,9 @@
+import sys
+import os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
 from collections import defaultdict
 import contextlib
-import os
 import datetime
 from concurrent import futures
 import time
@@ -18,7 +21,7 @@ from flow_grpo.stat_tracking import PerPromptStatTracker
 from flow_grpo.diffusers_patch.sd3_pipeline_with_logprob import pipeline_with_logprob
 from flow_grpo.diffusers_patch.sd3_sde_with_logprob import sde_step_with_logprob
 import torch
-import wandb
+import swanlab
 from functools import partial
 import tqdm
 import tempfile
@@ -42,6 +45,8 @@ class TextPromptDataset(Dataset):
         self.file_path = os.path.join(dataset, f'{split}.txt')
         with open(self.file_path, 'r') as f:
             self.prompts = [line.strip() for line in f.readlines()]
+        if split == 'val':
+            self.prompts = self.prompts[:120]
         
     def __len__(self):
         return len(self.prompts)
@@ -101,30 +106,32 @@ class DistributedKRepeatSampler(Sampler):
         self.epoch = epoch  # Used to synchronize random state across epochs
 
 
-def calculate_zero_std_ratio(prompts, gathered_rewards):
+def calculate_zero_std_ratio(prompts, gathered_rewards, reward_key='ori_avg'):
     """
     Calculate the proportion of unique prompts whose reward standard deviation is zero.
-    
+
     Args:
         prompts: List of prompts.
-        gathered_rewards: Dictionary containing rewards, must include the key 'ori_avg'.
-        
+        gathered_rewards: Dictionary containing rewards.
+        reward_key: Which reward entry to diagnose (default 'ori_avg'; for decoupled
+            mode pass 'early_avg' or 'late_avg' to diagnose each stage separately).
+
     Returns:
         zero_std_ratio: Proportion of prompts with zero standard deviation.
         prompt_std_devs: Mean standard deviation across all unique prompts.
     """
     # Convert prompt list to NumPy array
     prompt_array = np.array(prompts)
-    
+
     # Get unique prompts and their group information
     unique_prompts, inverse_indices, counts = np.unique(
-        prompt_array, 
+        prompt_array,
         return_inverse=True,
         return_counts=True
     )
-    
+
     # Group rewards for each prompt
-    grouped_rewards = gathered_rewards['ori_avg'][np.argsort(inverse_indices)]
+    grouped_rewards = gathered_rewards[reward_key][np.argsort(inverse_indices)]
     split_indices = np.cumsum(counts)[:-1]
     reward_groups = np.split(grouped_rewards, split_indices)
     
@@ -189,6 +196,9 @@ def eval(pipeline, test_dataloader, test_embed_file, neg_prompt_embed, neg_poole
     if config.train.ema:
         ema.copy_ema_to(transformer_trainable_parameters, store_temp=True)
 
+    # Fix seed for eval so that the same noise is used across different checkpoints
+    eval_generator = torch.Generator(device=accelerator.device).manual_seed(42)
+
     sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.test_batch_size, 1, 1)
     sample_neg_pooled_prompt_embeds = neg_pooled_prompt_embed.repeat(config.sample.test_batch_size, 1)
 
@@ -220,6 +230,7 @@ def eval(pipeline, test_dataloader, test_embed_file, neg_prompt_embed, neg_poole
                     height=config.resolution,
                     width=config.resolution,
                     noise_level=0,
+                    generator=eval_generator,
                 )
         rewards = executor.submit(reward_fn, images, prompts, prompt_metadata, only_strict=False)
         # yield to to make sure reward computation starts
@@ -263,10 +274,10 @@ def eval(pipeline, test_dataloader, test_embed_file, neg_prompt_embed, neg_poole
             sampled_rewards = [{k: last_batch_rewards_gather[k][index] for k in last_batch_rewards_gather} for index in sample_indices]
             for key, value in all_rewards.items():
                 print(key, value.shape)
-            wandb.log(
+            swanlab.log(
                 {
                     "eval_images": [
-                        wandb.Image(
+                        swanlab.Image(
                             os.path.join(tmpdir, f"{idx}.jpg"),
                             caption=f"{prompt:.1000} | " + " | ".join(f"{k}: {v:.2f}" for k, v in reward.items() if v != -10),
                         )
@@ -299,14 +310,40 @@ def main(_):
     # basic Accelerate and logging setup
     config = FLAGS.config
 
-    unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
     if not config.run_name:
-        config.run_name = unique_id
-    else:
-        config.run_name += "_" + unique_id
+        config.run_name = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
 
     # number of timesteps within each trajectory to train on
     num_train_timesteps = int(config.sample.num_steps * config.train.timestep_fraction)
+
+    # Validate decoupled-reward configuration early so mis-configurations fail before
+    # expensive model loading.
+    if config.reward_decoupled:
+        early_keys = set(config.reward_fn_early.keys())
+        late_keys = set(config.reward_fn_late.keys())
+        reward_keys = set(config.reward_fn.keys())
+        assert early_keys, (
+            "reward_decoupled=True but reward_fn_early is empty; "
+            "specify at least one reward model for early denoising steps."
+        )
+        assert late_keys, (
+            "reward_decoupled=True but reward_fn_late is empty; "
+            "specify at least one reward model for late denoising steps."
+        )
+        overlap = early_keys & late_keys
+        assert not overlap, (
+            f"reward_fn_early and reward_fn_late share reward models {sorted(overlap)}; "
+            "overlapping keys would be double-counted when splitting advantages."
+        )
+        missing = (early_keys | late_keys) - reward_keys
+        assert not missing, (
+            f"reward_fn is missing keys {sorted(missing)} that appear in reward_fn_early/late; "
+            "ensure config.reward_fn includes the union of both (e.g. "
+            "`config.reward_fn = config.reward_fn_early | config.reward_fn_late`)."
+        )
+        assert 0.0 <= config.reward_split_ratio <= 1.0, (
+            f"reward_split_ratio must be in [0, 1], got {config.reward_split_ratio}."
+        )
 
     accelerator_config = ProjectConfiguration(
         project_dir=os.path.join(config.logdir, config.run_name),
@@ -324,8 +361,10 @@ def main(_):
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
     )
     if accelerator.is_main_process:
-        wandb.init(
+        swanlab.init(
             project="flow_grpo",
+            experiment_name=config.run_name,
+            config=config.to_dict(),
         )
         # accelerator.init_trackers(
         #     project_name="flow-grpo",
@@ -435,11 +474,11 @@ def main(_):
     eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn)
 
     train_dataset = TextPromptDataset(config.dataset, 'train')
-    test_dataset = TextPromptDataset(config.dataset, 'test')
+    test_dataset = TextPromptDataset(config.dataset, 'val')
 
     # Open pre-computed prompt embeddings (lazy, read on demand)
     train_embed_file = safe_open(os.path.join(config.prompt_embed_dir, "train.safetensors"), framework="pt")
-    test_embed_file = safe_open(os.path.join(config.prompt_embed_dir, "test.safetensors"), framework="pt")
+    test_embed_file = safe_open(os.path.join(config.prompt_embed_dir, "val.safetensors"), framework="pt")
 
     # Load negative prompt embeddings (small, just one row)
     neg_prompt_embed_raw = train_embed_file.get_tensor("neg_prompt_embeds").to(inference_dtype)
@@ -528,6 +567,16 @@ def main(_):
         f"  Number of gradient updates per inner epoch = {samples_per_epoch // total_train_batch_size}"
     )
     logger.info(f"  Number of inner epochs = {config.train.num_inner_epochs}")
+    if config.reward_decoupled:
+        split_step = int(num_train_timesteps * config.reward_split_ratio)
+        early_steps = list(range(0, split_step))
+        late_steps = list(range(split_step, num_train_timesteps))
+        logger.info("")
+        logger.info("  ===== Decoupled Reward =====")
+        logger.info(f"  num_train_timesteps = {num_train_timesteps} (num_steps={config.sample.num_steps} * timestep_fraction={config.train.timestep_fraction})")
+        logger.info(f"  reward_split_ratio  = {config.reward_split_ratio} -> split_step = {split_step}")
+        logger.info(f"  reward_fn_early ({dict(config.reward_fn_early)}) -> early_steps (len={len(early_steps)}): {early_steps}")
+        logger.info(f"  reward_fn_late  ({dict(config.reward_fn_late)}) -> late_steps  (len={len(late_steps)}): {late_steps}")
     # assert config.sample.mini_num_images_per_prompt >= config.train.batch_size
     # assert config.sample.mini_num_images_per_prompt % config.train.batch_size == 0
     # assert samples_per_epoch % total_train_batch_size == 0
@@ -693,10 +742,10 @@ def main(_):
                 sampled_prompts = [prompts[i] for i in sample_indices]
                 sampled_rewards = [rewards['avg'][i] for i in sample_indices]
 
-                wandb.log(
+                swanlab.log(
                     {
                         "images": [
-                            wandb.Image(
+                            swanlab.Image(
                                 os.path.join(tmpdir, f"{idx}.jpg"),
                                 caption=f"{prompt:.100} | avg: {avg_reward:.2f}",
                             )
@@ -707,10 +756,24 @@ def main(_):
                 )
         # Backup the original per-image scalar reward before reshaping, so it remains accessible for logging.
         samples["rewards"]["ori_avg"] = samples["rewards"]["avg"]
-        # Expand reward from (batch_size,) to (batch_size, num_train_timesteps) by repeating along the
-        # timestep dimension. This makes it easier to introduce timestep-dependent advantages later
-        # (e.g., adding a KL reward that varies across denoising steps).
-        samples["rewards"]["avg"] = samples["rewards"]["avg"].unsqueeze(1).repeat(1, num_train_timesteps)
+        if config.reward_decoupled:
+            # Split the combined reward back into two stage-specific scalar rewards.
+            # early_avg drives advantages for the first split_ratio fraction of denoising steps;
+            # late_avg drives advantages for the remaining steps. Each is the weighted sum of
+            # its constituent reward models (same convention as 'avg').
+            early_avg = torch.zeros_like(samples["rewards"]["avg"])
+            for name, weight in config.reward_fn_early.items():
+                early_avg = early_avg + weight * samples["rewards"][name]
+            late_avg = torch.zeros_like(samples["rewards"]["avg"])
+            for name, weight in config.reward_fn_late.items():
+                late_avg = late_avg + weight * samples["rewards"][name]
+            samples["rewards"]["early_avg"] = early_avg
+            samples["rewards"]["late_avg"] = late_avg
+        else:
+            # Expand reward from (batch_size,) to (batch_size, num_train_timesteps) by repeating along the
+            # timestep dimension. This makes it easier to introduce timestep-dependent advantages later
+            # (e.g., adding a KL reward that varies across denoising steps).
+            samples["rewards"]["avg"] = samples["rewards"]["avg"].unsqueeze(1).repeat(1, num_train_timesteps)
         # Gather rewards from all GPUs onto every process (and move to CPU numpy), so that the
         # subsequent per-prompt advantage computation can see all samples for the same prompt.
         # gather rewards across processes
@@ -718,7 +781,7 @@ def main(_):
         gathered_rewards = {key: value.cpu().numpy() for key, value in gathered_rewards.items()}
         # log rewards and images
         if accelerator.is_main_process:
-            wandb.log(
+            swanlab.log(
                 {
                     "epoch": epoch,
                     **{f"reward_{key}": value.mean() for key, value in gathered_rewards.items() if '_strict_accuracy' not in key and '_accuracy' not in key},
@@ -733,7 +796,26 @@ def main(_):
             prompts = pipeline.tokenizer.batch_decode(
                 prompt_ids, skip_special_tokens=True
             )
-            advantages = stat_tracker.update(prompts, gathered_rewards['avg'])
+            if config.reward_decoupled:
+                # Normalize each stage's reward independently, then assign advantages per-timestep:
+                # first split steps get adv_early, remaining steps get adv_late. This is
+                # mathematically equivalent to building an (N, T) reward tensor with the two
+                # scalars tiled across columns and calling stat_tracker.update once, but avoids
+                # redundant per-timestep normalization of identical values.
+                adv_early = stat_tracker.update(prompts, gathered_rewards['early_avg'])  # (N,)
+                # Clear between the two updates; otherwise early stats would contaminate late stats.
+                stat_tracker.clear()
+                adv_late = stat_tracker.update(prompts, gathered_rewards['late_avg'])    # (N,)
+                split_step = int(num_train_timesteps * config.reward_split_ratio)
+                advantages = np.concatenate(
+                    [
+                        np.broadcast_to(adv_early[:, None], (adv_early.shape[0], split_step)),
+                        np.broadcast_to(adv_late[:, None], (adv_late.shape[0], num_train_timesteps - split_step)),
+                    ],
+                    axis=1,
+                )  # (N, num_train_timesteps)
+            else:
+                advantages = stat_tracker.update(prompts, gathered_rewards['avg'])
             if accelerator.is_local_main_process:
                 print("len(prompts)", len(prompts))
                 print("len unique prompts", len(set(prompts)))
@@ -741,20 +823,48 @@ def main(_):
             group_size, trained_prompt_num = stat_tracker.get_stats()
 
             zero_std_ratio, reward_std_mean = calculate_zero_std_ratio(prompts, gathered_rewards)
+            # In decoupled mode, diagnose each stage independently so we can detect when
+            # one reward model saturates while the other still has signal.
+            if config.reward_decoupled:
+                zero_std_ratio_early, reward_std_mean_early = calculate_zero_std_ratio(
+                    prompts, gathered_rewards, reward_key='early_avg'
+                )
+                zero_std_ratio_late, reward_std_mean_late = calculate_zero_std_ratio(
+                    prompts, gathered_rewards, reward_key='late_avg'
+                )
 
             if accelerator.is_main_process:
-                wandb.log(
-                    {
-                        "group_size": group_size,
-                        "trained_prompt_num": trained_prompt_num,
-                        "zero_std_ratio": zero_std_ratio,
-                        "reward_std_mean": reward_std_mean,
-                    },
-                    step=global_step,
-                )
+                log_dict = {
+                    "group_size": group_size,
+                    "trained_prompt_num": trained_prompt_num,
+                    "zero_std_ratio": zero_std_ratio,
+                    "reward_std_mean": reward_std_mean,
+                }
+                if config.reward_decoupled:
+                    log_dict.update({
+                        "zero_std_ratio_early": zero_std_ratio_early,
+                        "reward_std_mean_early": reward_std_mean_early,
+                        "zero_std_ratio_late": zero_std_ratio_late,
+                        "reward_std_mean_late": reward_std_mean_late,
+                    })
+                swanlab.log(log_dict, step=global_step)
             stat_tracker.clear()
         else:
-            advantages = (gathered_rewards['avg'] - gathered_rewards['avg'].mean()) / (gathered_rewards['avg'].std() + 1e-4)
+            if config.reward_decoupled:
+                split_step = int(num_train_timesteps * config.reward_split_ratio)
+                re = gathered_rewards['early_avg']
+                rl = gathered_rewards['late_avg']
+                adv_early = (re - re.mean()) / (re.std() + 1e-4)
+                adv_late = (rl - rl.mean()) / (rl.std() + 1e-4)
+                advantages = np.concatenate(
+                    [
+                        np.broadcast_to(adv_early[:, None], (adv_early.shape[0], split_step)),
+                        np.broadcast_to(adv_late[:, None], (adv_late.shape[0], num_train_timesteps - split_step)),
+                    ],
+                    axis=1,
+                )
+            else:
+                advantages = (gathered_rewards['avg'] - gathered_rewards['avg'].mean()) / (gathered_rewards['avg'].std() + 1e-4)
 
         # ungather advantages; we only need to keep the entries corresponding to the samples on this process
         advantages = torch.as_tensor(advantages)
@@ -782,7 +892,7 @@ def main(_):
                 random_indices = torch.randperm(len(false_indices))[:num_to_change]
                 mask[false_indices[random_indices]] = True
         if accelerator.is_main_process:
-            wandb.log(
+            swanlab.log(
                 {
                     "actual_batch_size": mask.sum().item()//config.sample.num_batches_per_epoch,
                 },
@@ -846,10 +956,7 @@ def main(_):
                     disable=not accelerator.is_local_main_process,
                 ):
                     with accelerator.accumulate(transformer):
-                        # Serial micro-batch forward passes to reduce peak GPU memory,
-                        # then concat results so the loss computation remains unchanged.
-                        acc_prev_sample, acc_log_prob, acc_prev_sample_mean, acc_std_dev = [], [], [], []
-                        acc_prev_sample_mean_ref = []
+                        num_micro_batches = (train_sample_size + micro_bs - 1) // micro_bs
                         for micro_idx in range(0, train_sample_size, micro_bs):
                             micro_end = micro_idx + micro_bs
                             micro_sample = {k: v[micro_idx:micro_end] for k, v in sample.items()}
@@ -873,74 +980,49 @@ def main(_):
                                     with torch.no_grad():
                                         with transformer.module.disable_adapter():
                                             _, _, psm_ref, _ = compute_log_prob(transformer, pipeline, micro_sample, j, micro_embeds, micro_pooled, config)
-                                    acc_prev_sample_mean_ref.append(psm_ref)
 
-                            acc_prev_sample.append(ps)
-                            acc_log_prob.append(lp)
-                            acc_prev_sample_mean.append(psm)
-                            acc_std_dev.append(sd)
-
-                        prev_sample = torch.cat(acc_prev_sample, dim=0)
-                        log_prob = torch.cat(acc_log_prob, dim=0)
-                        prev_sample_mean = torch.cat(acc_prev_sample_mean, dim=0)
-                        std_dev_t = torch.cat(acc_std_dev, dim=0)
-                        if config.train.beta > 0:
-                            prev_sample_mean_ref = torch.cat(acc_prev_sample_mean_ref, dim=0)
-
-                        # grpo logic
-                        advantages = torch.clamp(
-                            sample["advantages"][:, j],
-                            -config.train.adv_clip_max,
-                            config.train.adv_clip_max,
-                        )
-                        ratio = torch.exp(log_prob - sample["log_probs"][:, j])
-                        unclipped_loss = -advantages * ratio
-                        clipped_loss = -advantages * torch.clamp(
-                            ratio,
-                            1.0 - config.train.clip_range,
-                            1.0 + config.train.clip_range,
-                        )
-                        policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
-                        if config.train.beta > 0:
-                            kl_loss = ((prev_sample_mean - prev_sample_mean_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * std_dev_t ** 2)
-                            kl_loss = torch.mean(kl_loss)
-                            loss = policy_loss + config.train.beta * kl_loss
-                        else:
-                            loss = policy_loss
-
-                        info["approx_kl"].append(
-                            0.5
-                            * torch.mean((log_prob - sample["log_probs"][:, j]) ** 2)
-                        )
-                        info["clipfrac"].append(
-                            torch.mean(
-                                (
-                                    torch.abs(ratio - 1.0) > config.train.clip_range
-                                ).float()
+                            # Compute loss per micro-batch and backward immediately to free computation graph
+                            micro_advantages = torch.clamp(
+                                micro_sample["advantages"][:, j],
+                                -config.train.adv_clip_max,
+                                config.train.adv_clip_max,
                             )
-                        )
-                        info["clipfrac_gt_one"].append(
-                            torch.mean(
-                                (
-                                    ratio - 1.0 > config.train.clip_range
-                                ).float()
+                            ratio = torch.exp(lp - micro_sample["log_probs"][:, j])
+                            unclipped_loss = -micro_advantages * ratio
+                            clipped_loss = -micro_advantages * torch.clamp(
+                                ratio,
+                                1.0 - config.train.clip_range,
+                                1.0 + config.train.clip_range,
                             )
-                        )
-                        info["clipfrac_lt_one"].append(
-                            torch.mean(
-                                (
-                                    1.0 - ratio > config.train.clip_range
-                                ).float()
+                            policy_loss = torch.mean(torch.maximum(unclipped_loss, clipped_loss))
+                            if config.train.beta > 0:
+                                kl_loss = ((psm - psm_ref) ** 2).mean(dim=(1,2,3), keepdim=True) / (2 * sd ** 2)
+                                kl_loss = torch.mean(kl_loss)
+                                loss = policy_loss + config.train.beta * kl_loss
+                            else:
+                                loss = policy_loss
+
+                            # Scale loss by num_micro_batches so accumulated gradients are equivalent
+                            accelerator.backward(loss / num_micro_batches)
+
+                            # Log metrics — detach to release computation graph
+                            info["approx_kl"].append(
+                                (0.5 * torch.mean((lp - micro_sample["log_probs"][:, j]) ** 2)).detach()
                             )
-                        )
-                        info["policy_loss"].append(policy_loss)
-                        if config.train.beta > 0:
-                            info["kl_loss"].append(kl_loss)
+                            info["clipfrac"].append(
+                                torch.mean((torch.abs(ratio - 1.0) > config.train.clip_range).float()).detach()
+                            )
+                            info["clipfrac_gt_one"].append(
+                                torch.mean((ratio - 1.0 > config.train.clip_range).float()).detach()
+                            )
+                            info["clipfrac_lt_one"].append(
+                                torch.mean((1.0 - ratio > config.train.clip_range).float()).detach()
+                            )
+                            info["policy_loss"].append(policy_loss.detach())
+                            if config.train.beta > 0:
+                                info["kl_loss"].append(kl_loss.detach())
+                            info["loss"].append(loss.detach())
 
-                        info["loss"].append(loss)
-
-                        # backward pass
-                        accelerator.backward(loss)
                         if accelerator.sync_gradients:
                             accelerator.clip_grad_norm_(
                                 transformer.parameters(), config.train.max_grad_norm
@@ -958,7 +1040,7 @@ def main(_):
                         info = accelerator.reduce(info, reduction="mean")
                         info.update({"epoch": epoch, "inner_epoch": inner_epoch})
                         if accelerator.is_main_process:
-                            wandb.log(info, step=global_step)
+                            swanlab.log(info, step=global_step)
                         global_step += 1
                         info = defaultdict(list)
                 if config.train.ema:

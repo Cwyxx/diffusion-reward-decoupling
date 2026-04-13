@@ -231,12 +231,12 @@ def pickscore_sd3():
     config.train.ema = True
     config.save_freq = 60 # epoch
     config.eval_freq = 60
-    config.save_dir = '/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/flow-grpo/sd-3-5-medium/model-ckpt'
+    config.run_name = "pickscore"
+    config.save_dir = f'/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/flow-grpo/sd-3-5-medium/model-ckpt/{config.run_name}'
     config.prompt_embed_dir = "/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/prompt-embedding/HPDv3"
     config.reward_fn = {
         "pickscore_remote": 1.0,
     }
-    config.run_name = "pickscore"
     
     config.prompt_fn = "HPDv3"
 
@@ -247,14 +247,16 @@ def pickscore_sd3_decoupled_reward():
     config = pickscore_sd3()
 
     config.reward_decoupled = True
-    # Early denoising steps: focus on aesthetic quality (global structure, color, composition)
+    # Early denoising steps: focus on high-level features (global structure, composition, semantics)
     config.reward_fn_early = {
-        "aesthetic": 1.0,
+        "pickscore_remote": 1.0,
     }
-    # Late denoising steps: focus on text-image alignment (details, semantics)
+    # Late denoising steps: focus on low-level features (details, textures)
     config.reward_fn_late = {
-        "pickscore": 1.0,
+        "omniaid_remote": 1.0,
     }
+    
+    config.reward_fn = config.reward_fn_early | config.reward_fn_late
     # First 50% steps use early reward, remaining 50% use late reward
     config.reward_split_ratio = 0.5
 
