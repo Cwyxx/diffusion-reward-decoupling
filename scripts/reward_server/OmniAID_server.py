@@ -1,3 +1,9 @@
+"""OmniAID reward server.
+
+Usage:
+    CUDA_VISIBLE_DEVICES=7 HF_ENDPOINT=https://hf-mirror.com python scripts/reward_server/OmniAID_server.py --port 18092
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -253,7 +259,7 @@ class GatingNetwork(nn.Module):
 
 def get_config():
     config = types.SimpleNamespace()
-    config.ckpt_path = "checkpoint_mirage.pth"  # Path to the checkpoint
+    config.ckpt_path = "/data_center/data2/dataset/chenwy/21164-data/model-ckpt/OmniAID/checkpoint_omniaid_mirage.pth"  # Path to the checkpoint
     config.CLIP_path = "openai/clip-vit-large-patch14-336" # Default
     config.num_experts = 6
     config.rank_per_expert = 8
@@ -306,6 +312,7 @@ class OmniAIDScorer(torch.nn.Module):
 
 ## ── Flask reward server ──────────────────────────────────────────────
 import argparse
+import logging
 import pickle
 import traceback
 from flask import Flask, request, Blueprint
@@ -320,6 +327,8 @@ def create_app(device="cuda"):
 
     app = Flask(__name__)
     app.register_blueprint(root)
+    # Suppress default Flask request logs, only show errors
+    logging.getLogger("werkzeug").setLevel(logging.ERROR)
     return app
 
 

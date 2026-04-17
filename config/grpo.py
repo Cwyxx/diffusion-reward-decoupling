@@ -243,7 +243,7 @@ def pickscore_sd3():
     config.per_prompt_stat_tracking = True
     return config
 
-def pickscore_sd3_decoupled_reward():
+def sd3_decoupled_reward():
     config = pickscore_sd3()
 
     config.reward_decoupled = True
@@ -257,10 +257,10 @@ def pickscore_sd3_decoupled_reward():
     }
     
     config.reward_fn = config.reward_fn_early | config.reward_fn_late
-    # First 50% steps use early reward, remaining 50% use late reward
-    config.reward_split_ratio = 0.5
-
-    config.save_dir = 'logs/pickscore_decoupled/sd3.5-M'
+    # First 70% steps use early reward, remaining 30% use late reward
+    config.reward_split_ratio = 0.7
+    config.run_name = "pickscore_omniaid_decoupled_0.7"
+    
     return config
 
 def clipscore_sd3():
