@@ -208,6 +208,38 @@ def video_ocr_score(device):
 
     return _fn
 
+def deqa_score(device):
+    """Local transformers DeQA (zhiyuanyou/DeQA-Score-Mix3). Accepts a list of
+    image paths (eval-time) or a torch.Tensor / ndarray batch (training-time).
+    """
+    from transformers import AutoModelForCausalLM
+
+    model = AutoModelForCausalLM.from_pretrained(
+        "zhiyuanyou/DeQA-Score-Mix3",
+        trust_remote_code=True,
+        attn_implementation="eager",
+        torch_dtype=torch.float16,
+        device_map="auto",
+        revision="f37ba4273ad8d7548e21ac2fa58353c517e4df49",
+    )
+
+    def _to_pil_list(images):
+        if isinstance(images, list) and len(images) > 0 and isinstance(images[0], str):
+            return [Image.open(p).convert("RGB") for p in images]
+        if isinstance(images, torch.Tensor):
+            images = (images * 255).round().clamp(0, 255).to(torch.uint8).cpu().numpy()
+            images = images.transpose(0, 2, 3, 1)  # NCHW -> NHWC
+        return [Image.fromarray(arr) for arr in images]
+
+    def _fn(images, prompts, metadata):
+        del prompts, metadata
+        pil_images = _to_pil_list(images)
+        scores = model.score(pil_images).tolist()
+        return scores, {}
+
+    return _fn
+
+
 def deqa_score_remote(device):
     """Submits images to DeQA and computes a reward.
     """
@@ -457,9 +489,104 @@ def unifiedreward_score_sglang(device):
     
     return _fn
 
+def hpsv3_score(device):
+    """HPSv3 reward. Caller must pass a list of image paths as ``images``."""
+    from hpsv3 import HPSv3RewardInferencer
+
+    inferencer = HPSv3RewardInferencer(device=device)
+
+    def _fn(image_paths, prompts, metadata):
+        del metadata
+        with torch.no_grad():
+            rewards = inferencer.reward(prompts=prompts, image_paths=image_paths)
+        return [r[0].item() for r in rewards], {}
+
+    return _fn
+
+
+def visualquality_r1_score(device):
+    """VisualQuality-R1 (Qwen2.5-VL based IQA). Caller must pass a list of
+    image paths. Outputs float scores in [1, 5].
+    """
+    import random
+    import re
+
+    from qwen_vl_utils import process_vision_info
+    from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+
+    model_path = "TianheWu/VisualQuality-R1-7B"
+
+    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
+        model_path,
+        torch_dtype=torch.bfloat16,
+        attn_implementation="flash_attention_2",
+        device_map=device,
+    )
+    processor = AutoProcessor.from_pretrained(model_path)
+    processor.tokenizer.padding_side = "left"
+
+    iqa_question = (
+        "You are doing the image quality assessment task. Here is the question: "
+        "What is your overall rating on the quality of this picture? The rating should be a float between 1 and 5, "
+        "rounded to two decimal places, with 1 representing very poor quality and 5 representing excellent quality."
+    )
+    question_template = (
+        "{question} First output the thinking process in <think> </think> tags and then "
+        "output the final answer with only one score in <answer> </answer> tags."
+    )
+
+    def _score_one(image_path):
+        message = [{
+            "role": "user",
+            "content": [
+                {"type": "image", "image": image_path},
+                {"type": "text", "text": question_template.format(question=iqa_question)},
+            ],
+        }]
+        text = [processor.apply_chat_template(
+            message, tokenize=False, add_generation_prompt=True, add_vision_id=True
+        )]
+        image_inputs, video_inputs = process_vision_info([message])
+        inputs = processor(
+            text=text,
+            images=image_inputs,
+            videos=video_inputs,
+            padding=True,
+            return_tensors="pt",
+        ).to(device)
+
+        generated = model.generate(
+            **inputs,
+            use_cache=True,
+            max_new_tokens=2048,
+            do_sample=True,
+            top_k=50,
+            top_p=1,
+        )
+        trimmed = [out[len(inp):] for inp, out in zip(inputs.input_ids, generated)]
+        output_text = processor.batch_decode(
+            trimmed, skip_special_tokens=True, clean_up_tokenization_spaces=False
+        )[0]
+
+        try:
+            matches = re.findall(r"<answer>(.*?)</answer>", output_text, re.DOTALL)
+            answer = matches[-1].strip() if matches else output_text.strip()
+            return float(re.search(r"\d+(\.\d+)?", answer).group())
+        except Exception:
+            print(f"[visualquality_r1] parse failed for {image_path}; returning random fallback")
+            return float(random.randint(1, 5))
+
+    def _fn(image_paths, prompts, metadata):
+        del prompts, metadata
+        return [_score_one(p) for p in image_paths], {}
+
+    return _fn
+
+
 def multi_score(device, score_dict):
     score_functions = {
-        "deqa": deqa_score_remote,
+        "deqa": deqa_score,
+        "deqa_remote": deqa_score_remote,
         "ocr": ocr_score,
         "video_ocr": video_ocr_score,
         "imagereward": imagereward_score,
@@ -473,6 +600,8 @@ def multi_score(device, score_dict):
         "geneval": geneval_score,
         "clipscore": clip_score,
         "image_similarity": image_similarity_score,
+        "hpsv3": hpsv3_score,
+        "visualquality_r1": visualquality_r1_score,
     }
     score_fns={}
     for score_name, weight in score_dict.items():
