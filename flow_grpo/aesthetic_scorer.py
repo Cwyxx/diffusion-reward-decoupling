@@ -7,9 +7,6 @@ import numpy as np
 from transformers import CLIPModel, CLIPProcessor
 from PIL import Image
 
-ASSETS_PATH = resources.files("flow_grpo.assets")
-
-
 class MLP(nn.Module):
     def __init__(self):
         super().__init__()
@@ -36,7 +33,7 @@ class AestheticScorer(torch.nn.Module):
         self.processor = CLIPProcessor.from_pretrained("openai/clip-vit-large-patch14")
         self.mlp = MLP()
         state_dict = torch.load(
-            ASSETS_PATH.joinpath("sac+logos+ava1-l14-linearMSE.pth")
+            "/data_center/data2/dataset/chenwy/21164-data/model-ckpt/aesthetic_predictor_v2/sac+logos+ava1-l14-linearMSE.pth"
         )
         self.mlp.load_state_dict(state_dict)
         self.dtype = dtype
