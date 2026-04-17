@@ -344,6 +344,9 @@ def main(_):
         assert 0.0 <= config.reward_split_ratio <= 1.0, (
             f"reward_split_ratio must be in [0, 1], got {config.reward_split_ratio}."
         )
+        # Single source of truth for the early/late split boundary. Reused wherever
+        # we need to construct per-timestep advantages or log the split.
+        split_step = int(num_train_timesteps * config.reward_split_ratio)
 
     accelerator_config = ProjectConfiguration(
         project_dir=os.path.join(config.logdir, config.run_name),
@@ -568,7 +571,6 @@ def main(_):
     )
     logger.info(f"  Number of inner epochs = {config.train.num_inner_epochs}")
     if config.reward_decoupled:
-        split_step = int(num_train_timesteps * config.reward_split_ratio)
         early_steps = list(range(0, split_step))
         late_steps = list(range(split_step, num_train_timesteps))
         logger.info("")
@@ -806,7 +808,6 @@ def main(_):
                 # Clear between the two updates; otherwise early stats would contaminate late stats.
                 stat_tracker.clear()
                 adv_late = stat_tracker.update(prompts, gathered_rewards['late_avg'])    # (N,)
-                split_step = int(num_train_timesteps * config.reward_split_ratio)
                 advantages = np.concatenate(
                     [
                         np.broadcast_to(adv_early[:, None], (adv_early.shape[0], split_step)),
@@ -851,7 +852,6 @@ def main(_):
             stat_tracker.clear()
         else:
             if config.reward_decoupled:
-                split_step = int(num_train_timesteps * config.reward_split_ratio)
                 re = gathered_rewards['early_avg']
                 rl = gathered_rewards['late_avg']
                 adv_early = (re - re.mean()) / (re.std() + 1e-4)
