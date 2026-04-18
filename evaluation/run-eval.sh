@@ -39,8 +39,8 @@ metric_list=(pickscore imagereward aesthetic hpsv3 deqa visualquality_r1)
 DEFAULT_ENV=alignprop
 declare -A metric_env=(
     [hpsv3]=hpsv3
-    [deqa]=geneval2
-    [visualquality_r1]=geneval2
+    [deqa]=visualquality
+    [visualquality_r1]=visualquality
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
