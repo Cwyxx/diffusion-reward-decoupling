@@ -4,9 +4,9 @@
 # conflicts between reward libraries).
 #
 # Usage:
-#   bash evaluation/run-eval.sh <cuda_device> <method> <ckpt> <rl_framework> <dataset>
+#   bash evaluation/run-eval.sh <cuda_device> <method> <ckpt> <dataset>
 # Example:
-#   bash evaluation/run-eval.sh 0 sd-3-5-medium 5000 diffusion-dpo drawbench-unique
+#   bash evaluation/run-eval.sh 0 sd-3-5-medium 5000 drawbench-unique
 
 source /data3/chenweiyan/miniconda3/etc/profile.d/conda.sh
 
@@ -19,8 +19,10 @@ method=$2
 ckpt=$3
 dataset=$4
 
-if [[ -z "$cuda_device" || -z "$method" || -z "$ckpt" || -z "$rl_framework" || -z "$dataset" ]]; then
-    echo "Usage: $0 <cuda_device> <method> <ckpt> <rl_framework> <dataset>"
+rl_framework=flow-grpo
+
+if [[ -z "$cuda_device" || -z "$method" || -z "$ckpt" || -z "$dataset" ]]; then
+    echo "Usage: $0 <cuda_device> <method> <ckpt> <dataset>"
     exit 1
 fi
 
@@ -28,7 +30,7 @@ export CUDA_VISIBLE_DEVICES=${cuda_device}
 
 # ---- Config ----
 base_root="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling"
-base_ckpt_dir="${base_root}/flow-grpo/sd-3-5-medium/model-ckpt"
+base_ckpt_dir="${base_root}/${rl_framework}/sd-3-5-medium/model-ckpt"
 ckpt_dir="${base_ckpt_dir}/${method}/checkpoints/checkpoint-${ckpt}"
 
 seed_list=(42 123 456 789 1000)
