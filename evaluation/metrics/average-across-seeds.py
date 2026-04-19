@@ -15,12 +15,15 @@ def main(args):
         path = os.path.join(seed_dir, "average_scores.json")
         with open(path) as f:
             data = json.load(f)
-        for name, value in data.items():
+        print(f"\n--- {seed_dir} ---")
+        for name in sorted(data):
+            value = data[name]
+            print(f"  {name:<20}: {value:.6f}")
             agg[name].append(value)
 
-    print("--- Averages across seeds ---")
+    print("\n--- Averages across seeds ---")
     for name in sorted(agg):
-        print(f"{name:<20}: {float(np.mean(agg[name])):.6f}")
+        print(f"  {name:<20}: {float(np.mean(agg[name])):.6f}")
 
 
 if __name__ == "__main__":
