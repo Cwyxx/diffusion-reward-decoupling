@@ -294,7 +294,7 @@ class OmniAIDScorer(torch.nn.Module):
         self.device = device
         config = get_config()
         self.model = OmniAID(config=config)
-        checkpoint = torch.load(config.ckpt_path, map_location='cpu')
+        checkpoint = torch.load(config.ckpt_path, map_location='cpu', weights_only=False)
         self.model.load_state_dict(checkpoint['model'], strict=False) 
         self.model.to(self.device)
         self.model.eval()
