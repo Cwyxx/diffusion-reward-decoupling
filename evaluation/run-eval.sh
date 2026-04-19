@@ -7,6 +7,7 @@
 #   bash evaluation/run-eval.sh <cuda_device> <method> <ckpt> <dataset>
 # Example:
 #   bash evaluation/run-eval.sh 0 sd-3-5-medium 5000 drawbench-unique
+#   bash evaluation/run-eval.sh 0 base none drawbench-unique  # base model, no LoRA
 
 source /data3/chenweiyan/miniconda3/etc/profile.d/conda.sh
 
@@ -31,7 +32,12 @@ export CUDA_VISIBLE_DEVICES=${cuda_device}
 # ---- Config ----
 base_root="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling"
 base_ckpt_dir="${base_root}/${rl_framework}/sd-3-5-medium/model-ckpt"
-ckpt_dir="${base_ckpt_dir}/${method}/checkpoints/checkpoint-${ckpt}"
+# When method=base, skip LoRA loading and use the vanilla SD3.5-M pipeline.
+if [[ "${method}" == "base" ]]; then
+    ckpt_dir=""
+else
+    ckpt_dir="${base_ckpt_dir}/${method}/checkpoints/checkpoint-${ckpt}"
+fi
 
 seed_list=(42 123 456 789 1000)
 metric_list=(pickscore imagereward aesthetic hpsv3 deqa visualquality_r1)
@@ -61,9 +67,13 @@ for seed in "${seed_list[@]}"; do
 
     # ---- Generate ----
     conda activate "${DEFAULT_ENV}"
+    ckpt_arg=()
+    if [[ -n "${ckpt_dir}" ]]; then
+        ckpt_arg=(--checkpoint_path "${ckpt_dir}")
+    fi
     python "${GENERATE_PY}" \
         --seed ${seed} \
-        --checkpoint_path "${ckpt_dir}" \
+        "${ckpt_arg[@]}" \
         --dataset "${dataset}" \
         --output_dir "${image_dir}" \
         --save_images
