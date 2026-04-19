@@ -51,7 +51,7 @@ def load_pipeline(checkpoint_path, dtype, device):
     pipeline = StableDiffusion3Pipeline.from_pretrained(MODEL_ID)
 
     if checkpoint_path:
-        lora_path = os.path.join(checkpoint_path, "lora", "learner")
+        lora_path = os.path.join(checkpoint_path, "lora")
         if not os.path.exists(lora_path):
             raise FileNotFoundError(f"LoRA directory not found at {lora_path}")
         print(f"Loading LoRA weights from: {lora_path}")
