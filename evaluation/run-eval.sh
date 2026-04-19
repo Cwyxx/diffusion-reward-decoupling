@@ -17,8 +17,7 @@ export TOKENIZERS_PARALLELISM=False
 cuda_device=$1
 method=$2
 ckpt=$3
-rl_framework=$4
-dataset=$5
+dataset=$4
 
 if [[ -z "$cuda_device" || -z "$method" || -z "$ckpt" || -z "$rl_framework" || -z "$dataset" ]]; then
     echo "Usage: $0 <cuda_device> <method> <ckpt> <rl_framework> <dataset>"
@@ -28,8 +27,8 @@ fi
 export CUDA_VISIBLE_DEVICES=${cuda_device}
 
 # ---- Config ----
-base_root="/data_center/data2/dataset/chenwy/21164-data"
-base_ckpt_dir="${base_root}/${rl_framework}/sd-3-5-medium/model-ckpt"
+base_root="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling"
+base_ckpt_dir="${base_root}/flow-grpo/sd-3-5-medium/model-ckpt"
 ckpt_dir="${base_ckpt_dir}/${method}/checkpoints/checkpoint-${ckpt}"
 
 seed_list=(42 123 456 789 1000)
