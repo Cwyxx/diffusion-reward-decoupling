@@ -47,14 +47,17 @@ declare -A metric_env=(
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GENERATE_PY="${SCRIPT_DIR}/metrics/generate-images.py"
 SCORE_PY="${SCRIPT_DIR}/metrics/score-images.py"
+AVERAGE_PY="${SCRIPT_DIR}/metrics/average-across-seeds.py"
 
 # ---- Loop ----
+seed_dirs=()
 for seed in "${seed_list[@]}"; do
     echo "============================================"
     echo "Seed: ${seed}"
     echo "============================================"
 
     image_dir="${base_root}/${rl_framework}/sd-3-5-medium/generate_images_seed_${seed}/${dataset}/${method}/ckpt-${ckpt}"
+    seed_dirs+=("${image_dir}")
 
     # ---- Generate ----
     conda activate "${DEFAULT_ENV}"
@@ -77,3 +80,10 @@ for seed in "${seed_list[@]}"; do
             --metrics "${metric}"
     done
 done
+
+# ---- Average each metric across all seeds ----
+echo "============================================"
+echo "Averaging across seeds"
+echo "============================================"
+conda activate "${DEFAULT_ENV}"
+python "${AVERAGE_PY}" --seed_dirs "${seed_dirs[@]}"
