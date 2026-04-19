@@ -40,7 +40,7 @@ metric_list=(pickscore imagereward aesthetic hpsv3 deqa visualquality_r1)
 DEFAULT_ENV=alignprop
 declare -A metric_env=(
     [hpsv3]=hpsv3
-    [deqa]=visualquality
+    [deqa]=internvl
     [visualquality_r1]=visualquality
 )
 

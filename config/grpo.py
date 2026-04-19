@@ -256,7 +256,7 @@ def sd3_decoupled_reward():
         "omniaid_remote": 1.0,
     }
     
-    config.reward_fn = config.reward_fn_early | config.reward_fn_late
+    config.reward_fn = {**config.reward_fn_early, **config.reward_fn_late}
     # First 70% steps use early reward, remaining 30% use late reward
     config.reward_split_ratio = 0.7
     config.run_name = "pickscore_omniaid_decoupled_0.7"
