@@ -483,7 +483,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decouping/the-evoluation-of-generated-images",
+        default="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/the-evoluation-of-generated-images",
         help="Directory to save evaluation results and generated images.",
     )
     parser.add_argument(
@@ -495,4 +495,4 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(args)
     
-# HF_ENDPOINT=https://hf-mirror.com  CUDA_VISIBLE_DEVICES=0 python the-evolution-of-generated-images.py
+# HF_ENDPOINT=https://hf-mirror.com  CUDA_VISIBLE_DEVICES=6 python the-evolution-of-generated-images.py
