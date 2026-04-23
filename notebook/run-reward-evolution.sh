@@ -35,6 +35,12 @@ declare -A reward_env=(
     [visualquality_r1]=visualquality
 )
 
+# Per-reward per-prompt chunk size to avoid OOM. 0 = full batch.
+declare -A reward_bs=(
+    [hpsv3]=2
+    [visualquality_r1]=1
+)
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY="${SCRIPT_DIR}/reward-evolution-of-generated-images.py"
 
@@ -43,12 +49,14 @@ for reward in "${reward_list[@]}"; do
     echo "Reward: ${reward}"
     echo "============================================"
     env="${reward_env[$reward]:-$DEFAULT_ENV}"
+    bs="${reward_bs[$reward]:-0}"
     conda activate "${env}"
     python "${PY}" \
         --input_dir "${input_dir}" \
         --dataset "${dataset}" \
         --rewards "${reward}" \
-        --output_dir "${output_dir}"
+        --output_dir "${output_dir}" \
+        --batch_size "${bs}"
 done
 
 echo "All rewards done. Merged results in ${output_dir}"

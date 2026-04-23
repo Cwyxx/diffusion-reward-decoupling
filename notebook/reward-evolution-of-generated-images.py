@@ -211,9 +211,25 @@ def main(args):
             prompts_batch = [data["prompt_text"]] * n
             metadatas = [{} for _ in range(n)]
 
+            # Chunk the per-prompt batch to avoid OOM for heavy rewards (hpsv3).
+            bs = args.batch_size if args.batch_size and args.batch_size > 0 else n
+
             try:
-                score_details, _ = scoring_fn(images_input, prompts_batch, metadatas)
-                scores = _to_jsonable(score_details[reward_name])
+                chunked = []
+                for start in range(0, n, bs):
+                    end = min(start + bs, n)
+                    img_chunk = images_input[start:end]
+                    p_chunk = prompts_batch[start:end]
+                    m_chunk = metadatas[start:end]
+                    sd, _ = scoring_fn(img_chunk, p_chunk, m_chunk)
+                    vals = _to_jsonable(sd[reward_name])
+                    if isinstance(vals, list):
+                        chunked.extend(vals)
+                    else:
+                        chunked.append(vals)
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                scores = chunked
             except Exception as e:
                 print(f"  prompt_{idx}: {reward_name} failed: {e}")
                 scores = None
@@ -290,6 +306,12 @@ if __name__ == "__main__":
         type=str,
         default="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/reward-evolution",
         help="Directory to save per-prompt reward JSONs and summary.",
+    )
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=0,
+        help="Chunk size for per-prompt scoring (0 = full batch). Set a small value for memory-heavy rewards like hpsv3.",
     )
     args = parser.parse_args()
     main(args)
