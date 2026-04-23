@@ -98,6 +98,52 @@ def _to_jsonable(scores):
     return list(scores)
 
 
+def _merge_per_prompt_json(path, new_res):
+    """Merge new_res into existing file at `path` (if any), unioning `scores`.
+
+    Enables running the script multiple times (once per reward, in different
+    conda envs) without losing previously computed scores.
+    """
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+        merged_scores = {**existing.get("scores", {}), **new_res.get("scores", {})}
+        merged = {**existing, **new_res, "scores": merged_scores}
+    else:
+        merged = new_res
+    with open(path, "w") as f:
+        json.dump(merged, f, indent=2)
+
+
+def _merge_summary_json(path, new_summary):
+    if os.path.exists(path):
+        try:
+            with open(path) as f:
+                existing = json.load(f)
+        except Exception:
+            existing = {}
+        existing_rewards = existing.get("rewards", [])
+        merged_rewards = list(dict.fromkeys(existing_rewards + new_summary.get("rewards", [])))
+        merged_results = dict(existing.get("results", {}))
+        for k, v in new_summary.get("results", {}).items():
+            if k in merged_results:
+                merged_scores = {
+                    **merged_results[k].get("scores", {}),
+                    **v.get("scores", {}),
+                }
+                merged_results[k] = {**merged_results[k], **v, "scores": merged_scores}
+            else:
+                merged_results[k] = v
+        merged = {**existing, **new_summary, "rewards": merged_rewards, "results": merged_results}
+    else:
+        merged = new_summary
+    with open(path, "w") as f:
+        json.dump(merged, f, indent=2)
+
+
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -184,26 +230,24 @@ def main(args):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    # Save per-prompt and summary JSONs.
+    # Save per-prompt and summary JSONs. Merge with any existing file so
+    # per-reward invocations (in different conda envs) accumulate.
     os.makedirs(args.output_dir, exist_ok=True)
     for idx, res in results.items():
         out_json = os.path.join(args.output_dir, f"prompt_{idx}_rewards.json")
-        with open(out_json, "w") as f:
-            json.dump(res, f, indent=2)
+        _merge_per_prompt_json(out_json, res)
 
     summary_path = os.path.join(args.output_dir, "all_prompts_rewards.json")
-    with open(summary_path, "w") as f:
-        json.dump(
-            {
-                "dataset": args.dataset,
-                "split": args.split,
-                "rewards": rewards,
-                "input_dir": args.input_dir,
-                "results": {f"prompt_{k}": v for k, v in results.items()},
-            },
-            f,
-            indent=2,
-        )
+    _merge_summary_json(
+        summary_path,
+        {
+            "dataset": args.dataset,
+            "split": args.split,
+            "rewards": rewards,
+            "input_dir": args.input_dir,
+            "results": {f"prompt_{k}": v for k, v in results.items()},
+        },
+    )
     print(f"\nSaved per-prompt JSONs and summary to {args.output_dir}")
 
 
