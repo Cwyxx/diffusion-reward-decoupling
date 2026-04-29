@@ -682,7 +682,7 @@ This is the largest single piece. It loops over (sample_id, seed_index ∈ [0, N
 Differences from generate-images.py:
 - SD-v1.5 (StableDiffusionPipeline), not SD3.5-M
 - Checkpoint loading via evaluation/checkpoints registry
-- N images per prompt (path: images/{sid:05d}/{seed:02d}.png)
+- N images per prompt (path: images/{sid:05d}/{seed:05d}.png)
 - Manifest consistency check; skip already-existing image files
 - Per-(sample_id, seed_index) deterministic seed
 """
@@ -824,7 +824,7 @@ def main(args):
         os.makedirs(sid_dir, exist_ok=True)
 
         for seed_index in range(args.n_max):
-            img_path = os.path.join(sid_dir, f"{seed_index:02d}.png")
+            img_path = os.path.join(sid_dir, f"{seed_index:05d}.png")
             row_key = (sample_id, seed_index)
 
             image_exists = os.path.exists(img_path)

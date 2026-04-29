@@ -236,7 +236,7 @@ def run_worker(args, rank, world_size):
         os.makedirs(sid_dir, exist_ok=True)
 
         for seed_index in range(args.n_max):
-            img_path = os.path.join(sid_dir, f"{seed_index:02d}.png")
+            img_path = os.path.join(sid_dir, f"{seed_index:05d}.png")
             row_key = (sample_id, seed_index)
 
             image_exists = os.path.exists(img_path)

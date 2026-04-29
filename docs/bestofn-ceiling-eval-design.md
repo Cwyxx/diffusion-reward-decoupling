@@ -72,7 +72,7 @@ Stage 1: Generate                   Stage 2: Score              Stage 3: Aggrega
 ─────────────────────────────       ───────────────────────     ──────────────────────
 generate-images-bestofn.py          score-images.py             aggregate-bestofn.py
    ↓                                  ↓                            ↓
-images/{sid:05d}/{seed:02d}.png     evaluation_results.jsonl    bestofn/curves.json
+images/{sid:05d}/{seed:05d}.png     evaluation_results.jsonl    bestofn/curves.json
 manifest.json                                                    bestofn/plots/*.png
 ```
 
@@ -82,7 +82,7 @@ manifest.json                                                    bestofn/plots/*
 ${base_root}/bestofn-eval/sd-v1-5/
   └── ${method}/                                # base | dpo | kto | spo | smpo | dro | inpo
       └── ${dataset}/                           # drawbench-unique | ocr | geneval
-          ├── images/{sample_id:05d}/{seed_index:02d}.png
+          ├── images/{sample_id:05d}/{seed_index:05d}.png
           ├── manifest.json
           ├── evaluation_results.jsonl
           └── bestofn/
@@ -98,7 +98,7 @@ ${base_root}/bestofn-eval/sd-v1-5/
 **两个层次**：
 
 1. **Generation resumption**（核心场景：N 从 32 扩到 64）：
-   - 文件粒度。每张图独立路径 `images/{sid:05d}/{seed:02d}.png`。
+   - 文件粒度。每张图独立路径 `images/{sid:05d}/{seed:05d}.png`。
    - 直接 `Image.save(path)` 写盘；崩溃残留的部分文件下次运行重生成（单图重生成成本低，不上原子写保险）。
    - 遍历所有 (sample_id, seed_index ∈ [0, N))，目标文件已存在则跳过；否则用 `torch.Generator().manual_seed(seed_index)` 生成。
 
@@ -180,7 +180,7 @@ def load_pipeline(method_name: str) -> StableDiffusionPipeline: ...
 | Pipeline 类 | `StableDiffusion3Pipeline` | `StableDiffusionPipeline` |
 | Checkpoint 加载 | LoRA + 硬编码 target_modules | 通过 `evaluation/checkpoints/registry.py` |
 | 每 prompt 图数 | 1 | N（`--n_max`） |
-| 文件路径 | `images/{sid:05d}.png` | `images/{sid:05d}/{seed:02d}.png` |
+| 文件路径 | `images/{sid:05d}.png` | `images/{sid:05d}/{seed:05d}.png` |
 | 写入策略 | 直接 save | 原子写 |
 | 已存在文件 | 覆盖 | 跳过 |
 | Manifest | 无 | 有，启动时检查 |
