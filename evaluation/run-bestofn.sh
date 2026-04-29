@@ -12,7 +12,7 @@
 #   bash evaluation/run-bestofn.sh "0,1,2,3" dpo drawbench-unique 32
 #   bash evaluation/run-bestofn.sh "0"       base ocr              32
 
-set -euo pipefail
+set -eo pipefail
 
 source /data3/chenweiyan/miniconda3/etc/profile.d/conda.sh
 
