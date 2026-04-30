@@ -47,6 +47,7 @@ declare -A metric_env=(
     [hpsv3]=hpsv3
     [deqa]=internvl
     [visualquality_r1]=visualquality
+    [ocr]=visualquality
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
