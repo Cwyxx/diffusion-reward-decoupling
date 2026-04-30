@@ -46,9 +46,8 @@ REGISTRY: Dict[str, CheckpointRecipe] = {
         repo_id="ylwu/diffusion-dro-sd1.5",
     ),
     "spo": CheckpointRecipe(
-        method="spo", base_model_id=SD15, load_kind="lora",
-        repo_id="SPO-Diffusion-Models/SPO-SD-v1-5_4k-p_10ep_LoRA",
-        extra_kwargs={"weight_name": "spo-sd-v1-5_4k-p_10ep_lora_diffusers.safetensors"},
+        method="spo", base_model_id=SD15, load_kind="unet",
+        repo_id="SPO-Diffusion-Models/SPO-SD-v1-5_4k-p_10ep",
     ),
 }
 
