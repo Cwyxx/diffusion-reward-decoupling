@@ -67,7 +67,7 @@ def find_prompt_dirs(input_dir):
 
 
 def load_step_images(prompt_dir):
-    paths = sorted(glob.glob(os.path.join(prompt_dir, "step_*.png")))
+    paths = sorted(glob.glob(os.path.join(prompt_dir, "*step_*.png")))
     if not paths:
         return [], None
     images = np.stack(
