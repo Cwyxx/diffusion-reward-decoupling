@@ -231,7 +231,7 @@ def pickscore_sd3():
     config.train.ema = True
     config.save_freq = 60 # epoch
     config.eval_freq = 60
-    config.run_name = "pickscore"
+    config.run_name = "pickscore-backup"
     config.save_dir = f'/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/flow-grpo/sd-3-5-medium/model-ckpt/{config.run_name}'
     config.prompt_embed_dir = "/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/prompt-embedding/HPDv3"
     config.reward_fn = {
@@ -260,6 +260,7 @@ def sd3_decoupled_reward():
     # First 70% steps use early reward, remaining 30% use late reward
     config.reward_split_ratio = 0.7
     config.run_name = "pickscore_omniaid_decoupled_0.7"
+    config.save_dir = f'/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/flow-grpo/sd-3-5-medium/model-ckpt/{config.run_name}'
     
     return config
 
