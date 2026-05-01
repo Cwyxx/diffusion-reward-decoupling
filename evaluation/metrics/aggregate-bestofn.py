@@ -7,6 +7,7 @@ Outputs:
   ${output_dir}/bestofn/curves.json
   ${output_dir}/bestofn/plots/<metric>_curve_log.png
   ${output_dir}/bestofn/csv/<metric>_curve.csv
+  ${output_dir}/bestofn/per_prompt_<metric>.jsonl   (binary metrics only)
 
 Aggregation per metric:
   - HP-style continuous (pickscore, hpsv3, deqa, aesthetic, ...): mean over
@@ -14,6 +15,10 @@ Aggregation per metric:
   - OCR (continuous, thresholded for BoN): pass_at_n with default threshold
     1.0 (exact match). Re-running with a different threshold needs only
     re-aggregation, not re-scoring.
+
+For binary metrics, an extra per-prompt jsonl lists only the prompts the
+method solved (pass_at_n=True) — sorted by first_pass_n ascending so
+easiest wins come first. Failed prompts are omitted.
 """
 import argparse
 import csv
@@ -117,6 +122,53 @@ def build_score_matrix(rows, metric):
     return mat
 
 
+def write_per_prompt_jsonl(rows, metric, threshold, out_path):
+    """Per-prompt success table for a binary metric: solved prompts only.
+
+    One line per sample_id whose best seed crosses `threshold`. Each row
+    records max_score, first_pass_n (smallest n at which a seed crosses
+    threshold), the best seed's index and image path, and the prompt
+    itself. Prompts that never pass are omitted. Rows are sorted by
+    first_pass_n ascending so easiest-to-solve prompts come first.
+
+    Assumes upstream build_score_matrix already validated that every
+    (sample_id, seed_index) pair has a score for this metric.
+    """
+    grouped = defaultdict(dict)
+    prompts = {}
+    for r in rows:
+        if metric not in r["scores"]:
+            continue
+        sid = r["sample_id"]
+        seed_idx = r.get("seed_index", 0)
+        grouped[sid][seed_idx] = (r["scores"][metric], r["image_path"])
+        prompts[sid] = r["prompt"]
+
+    out_rows = []
+    for sid in sorted(grouped.keys()):
+        seed_map = grouped[sid]
+        n_max = max(seed_map.keys()) + 1
+        scores = np.array([seed_map[i][0] for i in range(n_max)])
+        paths = [seed_map[i][1] for i in range(n_max)]
+        passed = scores >= threshold
+        if not passed.any():
+            continue
+        best_seed = int(scores.argmax())
+        out_rows.append({
+            "sample_id": sid,
+            "prompt": prompts[sid],
+            "max_score": float(scores.max()),
+            "first_pass_n": int(np.argmax(passed) + 1),
+            "best_seed_index": best_seed,
+            "best_image_path": paths[best_seed],
+        })
+
+    out_rows.sort(key=lambda r: (r["first_pass_n"], -r["max_score"]))
+    with open(out_path, "w") as f:
+        for r in out_rows:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
 def write_curve_csv(curve, csv_path):
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -183,6 +235,12 @@ def main(args):
         plot_curve(curve, metric, kind, threshold,
                    os.path.join(plots_dir, f"{metric}_curve_log.png"))
         write_curve_csv(curve, os.path.join(csv_dir, f"{metric}_curve.csv"))
+
+        if kind == "binary":
+            write_per_prompt_jsonl(
+                rows, metric, threshold,
+                os.path.join(bestofn_dir, f"per_prompt_{metric}.jsonl"),
+            )
 
     curves_path = os.path.join(bestofn_dir, "curves.json")
     with open(curves_path, "w") as f:
