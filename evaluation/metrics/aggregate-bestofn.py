@@ -163,7 +163,7 @@ def write_per_prompt_jsonl(rows, metric, threshold, out_path):
             "best_image_path": paths[best_seed],
         })
 
-    out_rows.sort(key=lambda r: (r["first_pass_n"], -r["max_score"]))
+    out_rows.sort(key=lambda r: (r["first_pass_n"], -r["max_score"], r["sample_id"]))
     with open(out_path, "w") as f:
         for r in out_rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
