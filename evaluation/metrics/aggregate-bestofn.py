@@ -51,7 +51,7 @@ if _REPO_ROOT not in sys.path:
 
 # Metrics whose continuous scores get thresholded into pass/fail for BoN.
 # Everything else uses mean-of-max over the continuous values.
-BINARY_METRICS = {"ocr"}
+BINARY_METRICS = {"ocr", "geneval"}
 
 # Metrics that ALSO get a continuous mean-of-max view alongside the binary
 # pass@N view. Useful for OCR where the underlying score is a continuous
@@ -59,6 +59,11 @@ BINARY_METRICS = {"ocr"}
 # right?" while the continuous view answers "how close did it get?",
 # capturing sub-threshold improvements that binary aggregation discards.
 DUAL_METRICS = {"ocr"}
+
+# The 6 GenEval evaluation dimensions, matching gen_eval.py:321 and the
+# official summary_scores.py grouping. Each prompt's metadata.tag falls
+# in exactly one of these (verified on the 553-prompt benchmark).
+GENEVAL_TAGS = ["single_object", "two_object", "counting", "colors", "position", "color_attr"]
 
 
 # ---------- BoN primitives (pure math) ----------
@@ -232,6 +237,100 @@ def write_curve_csv(curve, csv_path):
             writer.writerow([n, f"{curve[n]:.6f}"])
 
 
+def _aggregate_geneval(rows, bestofn_dir, plots_dir, csv_dir):
+    """GenEval: per-dimension pass@N curves + Overall = macro-avg of 6 tags.
+
+    Returns the curves.json entries to merge: ``geneval`` (Overall, macro)
+    plus ``geneval_<tag>`` for each of the 6 tags. Also writes per-tag
+    pass-prompt jsonl, per-tag csv, and a combined breakdown plot.
+    """
+    out = {}
+    per_tag_curves = {}
+    n_max = None
+
+    for tag in GENEVAL_TAGS:
+        sub = [r for r in rows if (r.get("metadata") or {}).get("tag") == tag]
+        if not sub:
+            raise ValueError(f"No rows with metadata.tag={tag!r} found.")
+        mat = build_score_matrix(sub, "geneval")
+        if mat is None:
+            raise ValueError(
+                f"No 'geneval' scores for tag={tag!r}; run scoring first.")
+        curve = aggregate_curve(mat, kind="binary", threshold=1.0)
+        per_tag_curves[tag] = curve
+        n_max = mat.shape[1]
+        out[f"geneval_{tag}"] = {
+            "kind": "binary",
+            "threshold": 1.0,
+            "n_max": mat.shape[1],
+            "num_prompts": mat.shape[0],
+            "curve": curve,
+            "ceiling_lift": curve[mat.shape[1]] - curve[1],
+        }
+        write_curve_csv(curve, os.path.join(csv_dir, f"geneval_{tag}_curve.csv"))
+        write_per_prompt_jsonl(
+            sub, "geneval", 1.0,
+            os.path.join(bestofn_dir, f"per_prompt_geneval_{tag}.jsonl"),
+        )
+
+    # Macro-avg over 6 tags at each n — the official "Overall" number.
+    overall = {
+        n: float(np.mean([per_tag_curves[t][n] for t in GENEVAL_TAGS]))
+        for n in range(1, n_max + 1)
+    }
+    total_prompts = sum(out[f"geneval_{t}"]["num_prompts"] for t in GENEVAL_TAGS)
+    out["geneval"] = {
+        "kind": "binary",
+        "threshold": 1.0,
+        "n_max": n_max,
+        "num_prompts": total_prompts,
+        "curve": overall,
+        "ceiling_lift": overall[n_max] - overall[1],
+        "aggregation": "macro-avg over 6 tags",
+    }
+
+    # Standard single-line plot for Overall, mirroring other metrics.
+    plot_curve(overall, "geneval", "binary", 1.0,
+               os.path.join(plots_dir, "geneval_curve_log.png"))
+    write_curve_csv(overall, os.path.join(csv_dir, "geneval_curve.csv"))
+
+    # Combined breakdown: 6 thin tag lines + 1 thick Overall line.
+    _plot_geneval_breakdown(
+        per_tag_curves, overall,
+        os.path.join(plots_dir, "geneval_breakdown_curve_log.png"),
+    )
+
+    # Aggregate per-prompt jsonl (all tags), for cross-method row alignment.
+    write_per_prompt_jsonl(
+        rows, "geneval", 1.0,
+        os.path.join(bestofn_dir, "per_prompt_geneval.jsonl"),
+    )
+
+    return out
+
+
+def _plot_geneval_breakdown(per_tag_curves, overall_curve, out_path):
+    ns = sorted(overall_curve.keys())
+    fig, ax = plt.subplots(figsize=(6, 4))
+    cmap = plt.get_cmap("tab10")
+    for i, tag in enumerate(GENEVAL_TAGS):
+        ys = [per_tag_curves[tag][n] for n in ns]
+        ax.plot(ns, ys, marker="o", markersize=2.5, linewidth=1.2,
+                color=cmap(i), label=tag, alpha=0.85)
+    overall_ys = [overall_curve[n] for n in ns]
+    ax.plot(ns, overall_ys, marker="o", markersize=4, linewidth=2.2,
+            color="black", label="Overall (macro)")
+    ax.set_xscale("log", base=2)
+    ax.set_xlabel("N (samples per prompt)")
+    ax.set_ylabel("pass@N (threshold=1.0)")
+    ax.set_title("GenEval BoN: per-dimension + Overall")
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(fontsize=8, loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def plot_curve(curve, metric, kind, threshold, out_path):
     ns = sorted(curve.keys())
     ys = [curve[n] for n in ns]
@@ -269,6 +368,10 @@ def main(args):
 
     out = {}
     for metric in metrics:
+        if metric == "geneval":
+            # GenEval has its own per-dimension + macro-avg-Overall path.
+            out.update(_aggregate_geneval(rows, bestofn_dir, plots_dir, csv_dir))
+            continue
         mat = build_score_matrix(rows, metric)
         if mat is None:
             continue

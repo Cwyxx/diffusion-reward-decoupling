@@ -30,14 +30,11 @@ base_root="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupl
 output_dir="${base_root}/bestofn-eval/sd-v1-5/${method}/${dataset}"
 mkdir -p "${output_dir}"
 
-# Per-dataset metric set. GenEval scoring is not supported in this round.
+# Per-dataset metric set.
 case "${dataset}" in
     drawbench-unique) metric_list=(pickscore hpsv3 deqa aesthetic) ;;
     ocr)              metric_list=(ocr) ;;
-    geneval)
-        echo "GenEval scoring is not supported in this round; aborting." >&2
-        exit 1
-        ;;
+    geneval)          metric_list=(geneval) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -48,6 +45,7 @@ declare -A metric_env=(
     [deqa]=internvl
     [visualquality_r1]=visualquality
     [ocr]=visualquality
+    [geneval]=internvl
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

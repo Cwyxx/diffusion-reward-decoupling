@@ -21,7 +21,7 @@ from flow_grpo.rewards import multi_score
 
 AVAILABLE_METRICS = [
     "pickscore", "imagereward", "aesthetic", "hpsv3", "deqa", "visualquality_r1",
-    "ocr",
+    "ocr", "geneval",
 ]
 
 # Metrics whose scoring functions require small batches.
@@ -40,6 +40,11 @@ def prepare_images(metric, image_paths):
 
 
 def run_metric(metric, image_paths, prompts, metadatas, batch_size, device):
+    if metric == "geneval":
+        # Bypass multi_score / reward-server: run the official scorer in-process.
+        from flow_grpo.geneval_local import score as geneval_score_local
+        return [float(v) for v in geneval_score_local(image_paths, metadatas)]
+
     scoring_fn = multi_score(device, {metric: 1.0})
     all_scores = []
     for i in tqdm(range(0, len(image_paths), batch_size), desc=metric):
