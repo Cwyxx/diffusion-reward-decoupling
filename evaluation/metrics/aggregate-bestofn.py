@@ -17,8 +17,9 @@ Aggregation per metric:
     re-aggregation, not re-scoring.
 
 For binary metrics, an extra per-prompt jsonl lists only the prompts the
-method solved (pass_at_n=True) — sorted by first_pass_n ascending so
-easiest wins come first. Failed prompts are omitted.
+method solved (pass_at_n=True), sorted by sample_id so files from
+different methods line up row-by-row for cross-method diffing. Failed
+prompts are omitted.
 """
 import argparse
 import csv
@@ -129,7 +130,7 @@ def write_per_prompt_jsonl(rows, metric, threshold, out_path):
     records max_score, first_pass_n (smallest n at which a seed crosses
     threshold), the best seed's index and image path, and the prompt
     itself. Prompts that never pass are omitted. Rows are sorted by
-    first_pass_n ascending so easiest-to-solve prompts come first.
+    sample_id ascending so files across methods align row-by-row.
 
     Assumes upstream build_score_matrix already validated that every
     (sample_id, seed_index) pair has a score for this metric.
@@ -163,7 +164,7 @@ def write_per_prompt_jsonl(rows, metric, threshold, out_path):
             "best_image_path": paths[best_seed],
         })
 
-    out_rows.sort(key=lambda r: (r["first_pass_n"], -r["max_score"], r["sample_id"]))
+    out_rows.sort(key=lambda r: r["sample_id"])
     with open(out_path, "w") as f:
         for r in out_rows:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
