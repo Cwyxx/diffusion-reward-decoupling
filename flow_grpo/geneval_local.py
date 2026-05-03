@@ -21,11 +21,10 @@ from tqdm import tqdm
 
 
 # ---- Paths ----
-# Both the config .py and the .pth checkpoint live in the mmdet
-# mask2former config dir: <mmdet>/../configs/mask2former/. Set to None to
-# derive that path from ``mmdet.__file__`` at load time, matching the
-# official evaluate_images.py convention.
-MASK2FORMER_CKPT_DIR = None
+# Config .py is auto-derived from mmdet (<mmdet>/../configs/mask2former/),
+# matching the official evaluate_images.py convention. The .pth checkpoint
+# lives separately at MASK2FORMER_CKPT_DIR.
+MASK2FORMER_CKPT_DIR = "/data_center/data2/dataset/chenwy/21164-data/model-ckpt/geneval"
 MMDET_CONFIG_PATH = None
 
 OBJECT_DETECTOR = "mask2former_swin-s-p4-w7-224_lsj_8x2_50e_coco"
