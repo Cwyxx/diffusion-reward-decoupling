@@ -13,8 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 gpus="${1:-0,1,2,3,4,5,6,7}"
 n_max="${2:-32}"
 
-methods=(dpo inpo spo)
-datasets=(drawbench-unique ocr)
+methods=(base dpo inpo spo)
+datasets=(geneval)
 
 for method in "${methods[@]}"; do
     for dataset in "${datasets[@]}"; do
