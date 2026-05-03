@@ -1,4 +1,4 @@
-"""Generate N images per prompt for Best-of-N ceiling eval (SD-v1.5).
+"""Generate N images per prompt for Best-of-N ceiling eval (SD-v1.5 / SDXL).
 
 User-facing CLI: --gpus 0,1,2,3 dispatches to those GPUs in parallel.
 
@@ -210,7 +210,8 @@ def run_worker(args, rank, world_size):
     rank_jsonl = rank_jsonl_path(out_dir, rank)
 
     device = torch.device("cuda")
-    pipeline = load_pipeline(args.method, device=device, dtype=torch.float32)
+    dtype = torch.float16 if args.method.endswith("-sdxl") else torch.float32
+    pipeline = load_pipeline(args.method, device=device, dtype=dtype)
     pipeline.set_progress_bar_config(disable=True)
 
     items = load_prompts(args.dataset)
@@ -284,10 +285,11 @@ def run_worker(args, rank, world_size):
 
 def parse_args():
     ap = argparse.ArgumentParser(
-        description="Generate N images per prompt for Best-of-N ceiling eval (SD-v1.5).",
+        description="Generate N images per prompt for Best-of-N ceiling eval (SD-v1.5 / SDXL).",
     )
     ap.add_argument("--method", required=True,
-                    help="One of: base, dpo, kto, spo, smpo, dro, inpo")
+                    help="SD-v1.5: base, dpo, kto, spo, smpo, dro, inpo. "
+                         "SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl.")
     ap.add_argument("--dataset", required=True,
                     help="One of: drawbench-unique, ocr, geneval")
     ap.add_argument("--output_dir", required=True)

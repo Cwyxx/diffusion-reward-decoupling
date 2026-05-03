@@ -9,6 +9,7 @@ from typing import Any, Dict, Literal, Optional
 
 
 SD15 = "runwayml/stable-diffusion-v1-5"
+SDXL = "stabilityai/stable-diffusion-xl-base-1.0"
 
 LoadKind = Literal["base", "lora", "unet", "full"]
 
@@ -48,6 +49,21 @@ REGISTRY: Dict[str, CheckpointRecipe] = {
     "spo": CheckpointRecipe(
         method="spo", base_model_id=SD15, load_kind="unet",
         repo_id="SPO-Diffusion-Models/SPO-SD-v1-5_4k-p_10ep",
+    ),
+    "base-sdxl": CheckpointRecipe(
+        method="base-sdxl", base_model_id=SDXL, load_kind="base",
+    ),
+    "dpo-sdxl": CheckpointRecipe(
+        method="dpo-sdxl", base_model_id=SDXL, load_kind="unet",
+        repo_id="mhdang/dpo-sdxl-text2image-v1",
+    ),
+    "spo-sdxl": CheckpointRecipe(
+        method="spo-sdxl", base_model_id=SDXL, load_kind="unet",
+        repo_id="SPO-Diffusion-Models/SPO-SDXL_4k-p_10ep",
+    ),
+    "inpo-sdxl": CheckpointRecipe(
+        method="inpo-sdxl", base_model_id=SDXL, load_kind="unet",
+        repo_id="JaydenLu666/InPO-SDXL",
     ),
 }
 

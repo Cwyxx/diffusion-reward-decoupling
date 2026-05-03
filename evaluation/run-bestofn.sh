@@ -9,8 +9,11 @@
 # Usage:
 #   bash evaluation/run-bestofn.sh <gpus> <method> <dataset> <n_max>
 # Example:
-#   bash evaluation/run-bestofn.sh "0,1,2,3" dpo drawbench-unique 32
-#   bash evaluation/run-bestofn.sh "0"       base ocr              32
+#   bash evaluation/run-bestofn.sh "0,1,2,3" dpo       drawbench-unique 32
+#   bash evaluation/run-bestofn.sh "0"       base      ocr              32
+#   bash evaluation/run-bestofn.sh "0,1,2,3" dpo-sdxl  geneval          32
+#
+# Method suffix "-sdxl" switches to SDXL: family="sdxl" subdir, 1024px.
 
 set -eo pipefail
 
@@ -21,13 +24,22 @@ export TOKENIZERS_PARALLELISM=False
 
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
-method=${2:?method (one of: base, dpo, kto, spo, smpo, dro, inpo)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr)}
+method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval)}
 n_max=${4:?n_max (e.g. 32)}
+
+# ---- Family-aware defaults (derived from method suffix) ----
+if [[ "${method}" == *-sdxl ]]; then
+    family="sdxl"
+    resolution=1024
+else
+    family="sd-v1-5"
+    resolution=512
+fi
 
 # ---- Config ----
 base_root="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling"
-output_dir="${base_root}/bestofn-eval/sd-v1-5/${method}/${dataset}"
+output_dir="${base_root}/bestofn-eval/${family}/${method}/${dataset}"
 mkdir -p "${output_dir}"
 
 # Per-dataset metric set.
@@ -67,7 +79,8 @@ python "${GENERATE_PY}" \
     --method "${method}" \
     --dataset "${dataset}" \
     --output_dir "${output_dir}" \
-    --n_max "${n_max}"
+    --n_max "${n_max}" \
+    --resolution "${resolution}"
 
 # ---- Stage 2: Score (per-metric conda env) ----
 for metric in "${metric_list[@]}"; do
