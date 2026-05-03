@@ -65,6 +65,10 @@ REGISTRY: Dict[str, CheckpointRecipe] = {
         method="inpo-sdxl", base_model_id=SDXL, load_kind="unet",
         repo_id="JaydenLu666/InPO-SDXL",
     ),
+    "smpo-sdxl": CheckpointRecipe(
+        method="smpo-sdxl", base_model_id=SDXL, load_kind="unet",
+        repo_id="JaydenLu666/SmPO-SDXL",
+    ),
 }
 
 

@@ -289,7 +289,7 @@ def parse_args():
     )
     ap.add_argument("--method", required=True,
                     help="SD-v1.5: base, dpo, kto, spo, smpo, dro, inpo. "
-                         "SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl.")
+                         "SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl.")
     ap.add_argument("--dataset", required=True,
                     help="One of: drawbench-unique, ocr, geneval")
     ap.add_argument("--output_dir", required=True)

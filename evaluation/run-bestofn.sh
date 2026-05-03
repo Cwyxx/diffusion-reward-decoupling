@@ -24,7 +24,7 @@ export TOKENIZERS_PARALLELISM=False
 
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
-method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl)}
+method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl)}
 dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval)}
 n_max=${4:?n_max (e.g. 32)}
 

@@ -19,6 +19,7 @@ UNETS = [
     ("dpo",  "mhdang/dpo-sdxl-text2image-v1",           "unet"),
     ("spo",  "SPO-Diffusion-Models/SPO-SDXL_4k-p_10ep", "unet"),
     ("inpo", "JaydenLu666/InPO-SDXL",                    "unet"),
+    ("smpo", "JaydenLu666/SmPO-SDXL",                    "unet"),
 ]
 
 
