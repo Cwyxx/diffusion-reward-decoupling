@@ -252,7 +252,13 @@ def run_worker(args, rank, world_size):
 
             if not image_exists:
                 generator = torch.Generator(device).manual_seed(seed_index)
-                with torch.no_grad():
+                # SD-3.5-M keeps its VAE in fp32 (set by _finalize) while the
+                # rest of the pipeline runs fp16 — autocast bridges the dtype
+                # mismatch at op time instead of forcing a uniform cast.
+                amp_enabled = args.method.endswith("-sd3")
+                with torch.no_grad(), torch.autocast(
+                    device_type="cuda", dtype=dtype, enabled=amp_enabled
+                ):
                     result = pipeline(
                         prompt,
                         num_inference_steps=args.num_inference_steps,
