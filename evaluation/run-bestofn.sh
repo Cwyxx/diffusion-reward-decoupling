@@ -9,11 +9,15 @@
 # Usage:
 #   bash evaluation/run-bestofn.sh <gpus> <method> <dataset> <n_max>
 # Example:
-#   bash evaluation/run-bestofn.sh "0,1,2,3" dpo       drawbench-unique 32
-#   bash evaluation/run-bestofn.sh "0"       base      ocr              32
-#   bash evaluation/run-bestofn.sh "0,1,2,3" dpo-sdxl  geneval          32
+#   bash evaluation/run-bestofn.sh "0,1,2,3" dpo                    drawbench-unique 32
+#   bash evaluation/run-bestofn.sh "0"       base                   ocr              32
+#   bash evaluation/run-bestofn.sh "0,1,2,3" dpo-sdxl               geneval          32
+#   bash evaluation/run-bestofn.sh "0,1,2,3" flowgrpo-pickscore-sd3 geneval          32
 #
-# Method suffix "-sdxl" switches to SDXL: family="sdxl" subdir, 1024px.
+# Method suffix selects the model family:
+#   *-sdxl -> SDXL (1024px, 50 steps, CFG 7.5, fp16)
+#   *-sd3  -> SD-3.5-M (512px, 40 steps, CFG 4.5, fp16)
+#   else   -> SD-v1.5 (512px, 50 steps, CFG 7.5, fp32)
 
 set -eo pipefail
 
@@ -24,7 +28,7 @@ export TOKENIZERS_PARALLELISM=False
 
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
-method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl)}
+method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3)}
 dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval)}
 n_max=${4:?n_max (e.g. 32)}
 
@@ -32,9 +36,18 @@ n_max=${4:?n_max (e.g. 32)}
 if [[ "${method}" == *-sdxl ]]; then
     family="sdxl"
     resolution=1024
+    num_inference_steps=50
+    guidance_scale=7.5
+elif [[ "${method}" == *-sd3 ]]; then
+    family="sd-3.5-m"
+    resolution=512
+    num_inference_steps=40
+    guidance_scale=4.5
 else
     family="sd-v1-5"
     resolution=512
+    num_inference_steps=50
+    guidance_scale=7.5
 fi
 
 # ---- Config ----
@@ -80,7 +93,9 @@ python "${GENERATE_PY}" \
     --dataset "${dataset}" \
     --output_dir "${output_dir}" \
     --n_max "${n_max}" \
-    --resolution "${resolution}"
+    --resolution "${resolution}" \
+    --num_inference_steps "${num_inference_steps}" \
+    --guidance_scale "${guidance_scale}"
 
 # ---- Stage 2: Score (per-metric conda env) ----
 for metric in "${metric_list[@]}"; do

@@ -10,8 +10,13 @@ from typing import Any, Dict, Literal, Optional
 
 SD15 = "runwayml/stable-diffusion-v1-5"
 SDXL = "stabilityai/stable-diffusion-xl-base-1.0"
+SD35M = "stabilityai/stable-diffusion-3.5-medium"
 
-LoadKind = Literal["base", "lora", "unet", "full"]
+# Local root for SD-3.5-M post-trained LoRA adapters (PEFT format: each
+# subdir contains adapter_config.json + adapter_model.safetensors).
+SD35M_LORA_ROOT = "/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/ckpt/SD-3.5-M"
+
+LoadKind = Literal["base", "lora", "peft_lora", "unet", "full"]
 
 
 @dataclass
@@ -68,6 +73,25 @@ REGISTRY: Dict[str, CheckpointRecipe] = {
     "smpo-sdxl": CheckpointRecipe(
         method="smpo-sdxl", base_model_id=SDXL, load_kind="unet",
         repo_id="JaydenLu666/SmPO-SDXL",
+    ),
+    "base-sd3": CheckpointRecipe(
+        method="base-sd3", base_model_id=SD35M, load_kind="base",
+    ),
+    "flowgrpo-pickscore-sd3": CheckpointRecipe(
+        method="flowgrpo-pickscore-sd3", base_model_id=SD35M, load_kind="peft_lora",
+        repo_id=f"{SD35M_LORA_ROOT}/FlowGRPO-PickScore",
+    ),
+    "grpo-guard-sd3": CheckpointRecipe(
+        method="grpo-guard-sd3", base_model_id=SD35M, load_kind="peft_lora",
+        repo_id=f"{SD35M_LORA_ROOT}/GRPO-Guard",
+    ),
+    "diffusion-dpo-sd3": CheckpointRecipe(
+        method="diffusion-dpo-sd3", base_model_id=SD35M, load_kind="peft_lora",
+        repo_id=f"{SD35M_LORA_ROOT}/Diffusion-DPO",
+    ),
+    "realalign-sd3": CheckpointRecipe(
+        method="realalign-sd3", base_model_id=SD35M, load_kind="peft_lora",
+        repo_id=f"{SD35M_LORA_ROOT}/RealAlign",
     ),
 }
 
