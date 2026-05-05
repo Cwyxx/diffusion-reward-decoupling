@@ -13,6 +13,11 @@
 #   bash evaluation/run-bestofn.sh "0"       base                   ocr              32
 #   bash evaluation/run-bestofn.sh "0,1,2,3" dpo-sdxl               geneval          32
 #   bash evaluation/run-bestofn.sh "0,1,2,3" flowgrpo-pickscore-sd3 geneval          32
+#   bash evaluation/run-bestofn.sh "0,1,2,3" base-sd3               wise             32
+#
+# WISE-specific: requires a vLLM OpenAI-compatible endpoint serving the
+# judge model (default Qwen3.5-35B-A3B). Set VLLM_API_BASE / VLLM_API_KEY
+# / JUDGE_MODEL to override defaults. See evaluation/benchmarks/WISE/README.md.
 #
 # Method suffix selects the model family:
 #   *-sdxl -> SDXL (1024px, 50 steps, CFG 7.5, fp16)
@@ -29,7 +34,7 @@ export TOKENIZERS_PARALLELISM=False
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
 method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise)}
 n_max=${4:?n_max (e.g. 32)}
 
 # ---- Family-aware defaults (derived from method suffix) ----
@@ -60,6 +65,7 @@ case "${dataset}" in
     drawbench-unique) metric_list=(pickscore hpsv3 deqa aesthetic) ;;
     ocr)              metric_list=(ocr) ;;
     geneval)          metric_list=(geneval) ;;
+    wise)             metric_list=(wise) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -96,6 +102,24 @@ python "${GENERATE_PY}" \
     --resolution "${resolution}" \
     --num_inference_steps "${num_inference_steps}" \
     --guidance_scale "${guidance_scale}"
+
+# ---- Stage 2 prep (WISE only): verify vLLM judge endpoint is up ----
+# WISE judging hits a remote vLLM OpenAI-compatible endpoint over HTTP, so
+# fail fast here if it isn't reachable; otherwise score-images.py would
+# burn time queuing 32K HTTP requests against a dead socket.
+if [[ "${dataset}" == "wise" ]]; then
+    : "${VLLM_API_BASE:=http://127.0.0.1:8000/v1}"
+    : "${VLLM_API_KEY:=EMPTY}"
+    : "${JUDGE_MODEL:=Qwen3.5-35B-A3B}"
+    export VLLM_API_BASE VLLM_API_KEY JUDGE_MODEL
+    echo "Probing vLLM judge endpoint at ${VLLM_API_BASE}..."
+    if ! curl -sSf -m 10 -H "Authorization: Bearer ${VLLM_API_KEY}" "${VLLM_API_BASE}/models" >/dev/null; then
+        echo "ERROR: vLLM endpoint ${VLLM_API_BASE}/models is not reachable." >&2
+        echo "  Start vLLM first, e.g.:" >&2
+        echo "    vllm serve /path/to/${JUDGE_MODEL} --served-model-name ${JUDGE_MODEL} --host 0.0.0.0 --port 8000" >&2
+        exit 1
+    fi
+fi
 
 # ---- Stage 2: Score (per-metric conda env) ----
 for metric in "${metric_list[@]}"; do

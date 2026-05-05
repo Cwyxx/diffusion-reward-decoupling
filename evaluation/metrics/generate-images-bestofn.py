@@ -44,10 +44,22 @@ def _load_jsonl(path):
     return items
 
 
+def _load_wise(path):
+    # WISE_Verified merge.json is a JSON array of 1000 records keyed by
+    # prompt_id (1..1000). Sort by prompt_id so sample_id = prompt_id - 1
+    # is stable across runs and across machines, regardless of how the
+    # array was concatenated upstream.
+    with open(path, "r") as f:
+        data = json.load(f)
+    data.sort(key=lambda d: d["prompt_id"])
+    return [{"prompt": row["Prompt"], "metadata": row} for row in data]
+
+
 _DATASET_LOADERS = {
     "drawbench-unique": ("test.txt", _load_txt),
     "ocr":              ("test.txt", _load_txt),
     "geneval":          ("test_metadata.jsonl", _load_jsonl),
+    "wise":             ("merge.json", _load_wise),
 }
 
 
@@ -302,7 +314,7 @@ def parse_args():
                          "SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, "
                          "diffusion-dpo-sd3, realalign-sd3.")
     ap.add_argument("--dataset", required=True,
-                    help="One of: drawbench-unique, ocr, geneval")
+                    help="One of: drawbench-unique, ocr, geneval, wise")
     ap.add_argument("--output_dir", required=True)
     ap.add_argument("--gpus", required=True, metavar="0,1,2,3",
                     help="Comma-separated GPU IDs to dispatch to.")

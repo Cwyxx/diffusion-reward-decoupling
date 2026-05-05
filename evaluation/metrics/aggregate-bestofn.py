@@ -66,6 +66,27 @@ DUAL_METRICS = {"ocr"}
 GENEVAL_TAGS = ["single_object", "two_object", "counting", "colors", "position", "color_attr"]
 
 
+# WISE_Verified categories, matching evaluation/benchmarks/WISE/calculate_verified.py:65-79
+# and the weights at evaluation/benchmarks/WISE/calculate_verified.py:246.
+# Each prompt's metadata.prompt_id falls in exactly one range.
+WISE_CATEGORY_SPEC = [
+    # (name, prompt_id range [closed-open], weight)
+    ("CULTURE",   (1, 401),    0.40),
+    ("TIME",      (401, 521),  0.12),
+    ("SPACE",     (521, 641),  0.12),
+    ("BIOLOGY",   (641, 761),  0.12),
+    ("PHYSICS",   (761, 881),  0.12),
+    ("CHEMISTRY", (881, 1001), 0.12),
+]
+
+
+def _wise_category_for(prompt_id):
+    for name, (lo, hi), _w in WISE_CATEGORY_SPEC:
+        if lo <= prompt_id < hi:
+            return name
+    raise ValueError(f"prompt_id={prompt_id} outside WISE range [1, 1000]")
+
+
 # ---------- BoN primitives (pure math) ----------
 
 def bon_continuous(scores: np.ndarray, n: int) -> float:
@@ -331,6 +352,109 @@ def _plot_geneval_breakdown(per_tag_curves, overall_curve, out_path):
     plt.close(fig)
 
 
+def _aggregate_wise(rows, bestofn_dir, plots_dir, csv_dir):
+    """WISE_Verified: per-category pass@N curves + weighted Overall.
+
+    Returns the curves.json entries to merge: ``wise`` (Overall, weighted)
+    plus ``wise_<category>`` for each of the 6 categories. Also writes
+    per-category pass-prompt jsonl, per-category csv, and a combined
+    breakdown plot.
+
+    Overall uses the asymmetric WISE weights (CULTURE 0.40, others 0.12)
+    matching evaluation/benchmarks/WISE/calculate_verified.py:246. Sum of
+    weights is 1.0 so the Overall curve stays in [0, 1].
+    """
+    out = {}
+    per_cat_curves = {}
+    n_max = None
+
+    for cat_name, _rng, _w in WISE_CATEGORY_SPEC:
+        sub = [
+            r for r in rows
+            if (r.get("metadata") or {}).get("prompt_id") is not None
+            and _wise_category_for(r["metadata"]["prompt_id"]) == cat_name
+        ]
+        if not sub:
+            raise ValueError(f"No WISE rows in category {cat_name!r}.")
+        mat = build_score_matrix(sub, "wise")
+        if mat is None:
+            raise ValueError(
+                f"No 'wise' scores for category {cat_name!r}; run scoring first.")
+        curve = aggregate_curve(mat, kind="binary", threshold=1.0)
+        per_cat_curves[cat_name] = curve
+        n_max = mat.shape[1]
+        key = f"wise_{cat_name}"
+        out[key] = {
+            "kind": "binary",
+            "threshold": 1.0,
+            "n_max": mat.shape[1],
+            "num_prompts": mat.shape[0],
+            "curve": curve,
+            "ceiling_lift": curve[mat.shape[1]] - curve[1],
+        }
+        write_curve_csv(curve, os.path.join(csv_dir, f"{key}_curve.csv"))
+        write_per_prompt_jsonl(
+            sub, "wise", 1.0,
+            os.path.join(bestofn_dir, f"per_prompt_{key}.jsonl"),
+        )
+
+    # Weighted Overall, matching calculate_verified.py:246.
+    overall = {
+        n: float(sum(w * per_cat_curves[name][n] for name, _, w in WISE_CATEGORY_SPEC))
+        for n in range(1, n_max + 1)
+    }
+    total_prompts = sum(out[f"wise_{name}"]["num_prompts"] for name, _, _ in WISE_CATEGORY_SPEC)
+    out["wise"] = {
+        "kind": "binary",
+        "threshold": 1.0,
+        "n_max": n_max,
+        "num_prompts": total_prompts,
+        "curve": overall,
+        "ceiling_lift": overall[n_max] - overall[1],
+        "aggregation": "weighted: 0.40·CULTURE + 0.12·(TIME+SPACE+BIOLOGY+PHYSICS+CHEMISTRY)",
+    }
+
+    plot_curve(overall, "wise", "binary", 1.0,
+               os.path.join(plots_dir, "wise_curve_log.png"))
+    write_curve_csv(overall, os.path.join(csv_dir, "wise_curve.csv"))
+
+    _plot_wise_breakdown(
+        per_cat_curves, overall,
+        os.path.join(plots_dir, "wise_breakdown_curve_log.png"),
+    )
+
+    # Aggregate per-prompt jsonl (all categories), for cross-method row alignment.
+    write_per_prompt_jsonl(
+        rows, "wise", 1.0,
+        os.path.join(bestofn_dir, "per_prompt_wise.jsonl"),
+    )
+
+    return out
+
+
+def _plot_wise_breakdown(per_cat_curves, overall_curve, out_path):
+    ns = sorted(overall_curve.keys())
+    fig, ax = plt.subplots(figsize=(6, 4))
+    cmap = plt.get_cmap("tab10")
+    cat_names = [name for name, _, _ in WISE_CATEGORY_SPEC]
+    for i, name in enumerate(cat_names):
+        ys = [per_cat_curves[name][n] for n in ns]
+        ax.plot(ns, ys, marker="o", markersize=2.5, linewidth=1.2,
+                color=cmap(i), label=name, alpha=0.85)
+    overall_ys = [overall_curve[n] for n in ns]
+    ax.plot(ns, overall_ys, marker="o", markersize=4, linewidth=2.2,
+            color="black", label="Overall (weighted)")
+    ax.set_xscale("log", base=2)
+    ax.set_xlabel("N (samples per prompt)")
+    ax.set_ylabel("pass@N (threshold=1.0)")
+    ax.set_title("WISE BoN: per-category + Overall")
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(fontsize=8, loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def plot_curve(curve, metric, kind, threshold, out_path):
     ns = sorted(curve.keys())
     ys = [curve[n] for n in ns]
@@ -371,6 +495,10 @@ def main(args):
         if metric == "geneval":
             # GenEval has its own per-dimension + macro-avg-Overall path.
             out.update(_aggregate_geneval(rows, bestofn_dir, plots_dir, csv_dir))
+            continue
+        if metric == "wise":
+            # WISE has its own per-category + weighted-Overall path.
+            out.update(_aggregate_wise(rows, bestofn_dir, plots_dir, csv_dir))
             continue
         mat = build_score_matrix(rows, metric)
         if mat is None:
