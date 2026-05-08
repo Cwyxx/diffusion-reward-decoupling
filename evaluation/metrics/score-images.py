@@ -242,9 +242,9 @@ def _score_wise_in_place(todo_rows):
     api_base = os.environ.get("VLLM_API_BASE", "http://127.0.0.1:8000/v1").rstrip("/")
     api_key = os.environ.get("VLLM_API_KEY", "EMPTY")
     model = os.environ.get("JUDGE_MODEL", "Qwen3.5-35B-A3B")
-    max_workers = int(os.environ.get("WISE_MAX_WORKERS", "32"))
-    timeout = int(os.environ.get("WISE_TIMEOUT", "300"))
-    max_retries = int(os.environ.get("WISE_MAX_RETRIES", "3"))
+    max_workers = int(os.environ.get("WISE_MAX_WORKERS", "4"))
+    timeout = int(os.environ.get("WISE_TIMEOUT", "400"))
+    max_retries = int(os.environ.get("WISE_MAX_RETRIES", "4"))
 
     n = len(todo_rows)
     if n == 0:
