@@ -24,8 +24,10 @@ Usage:
 """
 import argparse
 import csv
+import json
 import os
 import sys
+from collections import defaultdict
 
 import matplotlib
 matplotlib.use("Agg")
@@ -82,6 +84,19 @@ CATEGORIES = [
     ("Overall (macro-avg)", "geneval_curve.csv",            "overall"),
 ]
 
+# Tag order + display labels for the GenEval-official N=4 summary table.
+# Matches GENEVAL_TAGS in aggregate-bestofn.py:66 and the official
+# summary_scores.py per-task breakdown.
+GENEVAL_TAGS = ["single_object", "two_object", "counting", "colors", "position", "color_attr"]
+TAG_LABELS = {
+    "single_object": "Single object",
+    "two_object":    "Two object",
+    "counting":      "Counting",
+    "colors":        "Colors",
+    "position":      "Position",
+    "color_attr":    "Color attr.",
+}
+
 
 def load_curve(base_root, method, csv_name):
     path = os.path.join(base_root, method, "geneval", "bestofn", "csv", csv_name)
@@ -93,6 +108,86 @@ def load_curve(base_root, method, csv_name):
             ns.append(int(row[0]))
             ys.append(float(row[1]))
     return np.array(ns), np.array(ys)
+
+
+def compute_official_n4(base_root, method, n_seeds=4):
+    """Replicate geneval-official summary_scores.py at N=n_seeds (default 4).
+
+    Loads ${base_root}/<method>/geneval/evaluation_results.jsonl, restricts
+    each prompt to seed_index 0..n_seeds-1, then computes per-tag mean over
+    all (prompt × seed) images and Overall as the macro-avg of the 6 tags.
+
+    Returns {"single_object": float, ..., "color_attr": float, "overall": float}.
+    Raises FileNotFoundError if the results file is missing, ValueError if
+    any (prompt, seed_index) in [0, n_seeds) is unscored for a tag.
+    """
+    results_path = os.path.join(base_root, method, "geneval", "evaluation_results.jsonl")
+    grouped = defaultdict(lambda: defaultdict(dict))  # tag -> sid -> {seed_idx: score}
+    with open(results_path) as f:
+        for ln in f:
+            ln = ln.strip()
+            if not ln:
+                continue
+            r = json.loads(ln)
+            if "geneval" not in r["scores"]:
+                continue
+            tag = (r.get("metadata") or {}).get("tag")
+            if tag not in GENEVAL_TAGS:
+                continue
+            seed_idx = r.get("seed_index", 0)
+            if seed_idx >= n_seeds:
+                continue
+            grouped[tag][r["sample_id"]][seed_idx] = r["scores"]["geneval"]
+
+    out = {}
+    per_tag_scores = []
+    for tag in GENEVAL_TAGS:
+        sid_map = grouped.get(tag, {})
+        if not sid_map:
+            raise ValueError(f"{method}: no rows with metadata.tag={tag!r}")
+        sample_ids = sorted(sid_map.keys())
+        mat = np.full((len(sample_ids), n_seeds), np.nan, dtype=float)
+        for i, sid in enumerate(sample_ids):
+            for s, v in sid_map[sid].items():
+                mat[i, s] = v
+        if np.isnan(mat).any():
+            n_missing = int(np.isnan(mat).sum())
+            raise ValueError(
+                f"{method}/{tag}: {n_missing} (sample_id, seed_index) entries "
+                f"in seeds 0..{n_seeds-1} are unscored."
+            )
+        score = float(mat.mean())
+        out[tag] = score
+        per_tag_scores.append(score)
+    out["overall"] = float(np.mean(per_tag_scores))
+    return out
+
+
+def print_official_n4_markdown(base_root, n_seeds=4):
+    """Print a markdown method × {6 tags + Overall} table to stdout."""
+    rows = {}
+    for method in METHODS:
+        try:
+            rows[method] = compute_official_n4(base_root, method, n_seeds=n_seeds)
+        except FileNotFoundError as e:
+            print(f"[warn] missing {e.filename}", file=sys.stderr)
+            rows[method] = None
+
+    headers = ["Method"] + [TAG_LABELS[t] for t in GENEVAL_TAGS] + ["Overall"]
+    print()
+    print(f"GenEval-official score @ N={n_seeds} (seed_index 0..{n_seeds-1}, "
+          f"per-image mean per tag, macro-avg over 6 tags)")
+    print("| " + " | ".join(headers) + " |")
+    print("|" + "|".join(["---"] * len(headers)) + "|")
+    for method in METHODS:
+        scores = rows[method]
+        label = METHOD_LABELS[method]
+        if scores is None:
+            cells = ["—"] * (len(GENEVAL_TAGS) + 1)
+        else:
+            cells = [f"{scores[t]:.2%}" for t in GENEVAL_TAGS] + [f"{scores['overall']:.2%}"]
+        print("| " + " | ".join([label] + cells) + " |")
+    print()
 
 
 def plot_one(label, csv_name, stem, base_root, out_dir):
@@ -153,6 +248,8 @@ def main(args):
     for label, csv_name, stem in CATEGORIES:
         plot_one(label, csv_name, stem, args.base_root, args.out_dir)
 
+    print_official_n4_markdown(args.base_root, n_seeds=args.official_n_seeds)
+
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(
@@ -166,5 +263,10 @@ if __name__ == "__main__":
     ap.add_argument(
         "--out_dir", default="bestofn_geneval_plots",
         help="Directory to write per-tag PNG + PDF files into.",
+    )
+    ap.add_argument(
+        "--official_n_seeds", type=int, default=4,
+        help="N for the geneval-official summary table printed to stdout "
+             "after plotting (default: 4, matching the official protocol).",
     )
     main(ap.parse_args())
