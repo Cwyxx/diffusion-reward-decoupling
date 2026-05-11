@@ -187,14 +187,14 @@ def _wise_extract_score(txt: str):
     return None
 
 
-def _wise_chat_completion(messages, *, api_base, api_key, model, timeout):
+def _wise_chat_completion(messages, *, api_base, api_key, model, timeout, temperature=0.0):
     headers = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
     payload = {
         "model": model,
         "messages": messages,
-        "temperature": 0.0,
+        "temperature": temperature,
         "max_tokens": 500,
         "chat_template_kwargs": {"enable_thinking": False},
     }
@@ -286,7 +286,7 @@ _DPG_USER_PROMPT_TEMPLATE = """You are answering a yes/no visual question about 
 Question: {question}
 
 Look at the image carefully. Respond with exactly one word: yes or no.
-Do not include any punctuation, explanation, or extra words. If you are not confident, answer no."""
+Do not include any punctuation, explanation, or extra words."""
 
 
 def _load_dpg_csv(csv_path=_DPG_CSV_PATH):
@@ -336,16 +336,20 @@ def _dpg_build_messages(question: str, image_base64: str) -> list:
     ]
 
 
-def _dpg_extract_yesno(txt: str) -> float:
-    """Return 1.0 for yes, 0.0 for no (or unparseable — conservative)."""
+def _dpg_extract_yesno(txt: str):
+    """Return 1.0 for yes, 0.0 for no, None if unparseable.
+
+    Returning None on parse failure (rather than silently 0.0) lets the caller
+    retry — keeping the judge protocol neutral instead of biasing toward "no".
+    """
     m = re.search(r"\b(yes|no)\b", txt, re.IGNORECASE)
     if m:
         return 1.0 if m.group(1).lower() == "yes" else 0.0
-    return 0.0
+    return None
 
 
 def _dpg_judge_one(image_path, item_id, questions_by_iid, *,
-                   api_base, api_key, model, timeout, max_retries):
+                   api_base, api_key, model, timeout, max_retries, retry_temperature):
     if item_id not in questions_by_iid:
         raise KeyError(f"DPG judge: item_id {item_id!r} not found in CSV "
                        f"(image={image_path})")
@@ -358,15 +362,22 @@ def _dpg_judge_one(image_path, item_id, questions_by_iid, *,
         messages = _dpg_build_messages(question, img64)
         last_err = None
         for attempt in range(1, max_retries + 1):
+            # 1st attempt deterministic; subsequent parse-failure retries
+            # use a small temperature so the judge actually samples a
+            # different reply instead of repeating the same unparseable text.
+            temp = 0.0 if attempt == 1 else retry_temperature
             try:
                 txt = _wise_chat_completion(
                     messages, api_base=api_base, api_key=api_key,
-                    model=model, timeout=timeout,
+                    model=model, timeout=timeout, temperature=temp,
                 )
-                qid2score[qid] = _dpg_extract_yesno(txt)
-                break
+                score = _dpg_extract_yesno(txt)
+                if score is not None:
+                    qid2score[qid] = score
+                    break
+                last_err = f"yes/no parse failed (temp={temp}); raw={txt[:200]!r}"
             except Exception as e:
-                last_err = f"{type(e).__name__}: {e}"
+                last_err = f"{type(e).__name__}: {e} (temp={temp})"
         else:
             raise RuntimeError(
                 f"DPG judge failed after {max_retries} attempts on "
@@ -391,12 +402,13 @@ def _score_dpg_in_place(todo_rows):
     Same HTTP/threading shape as _score_wise_in_place; inner per-image task
     issues ~13 yes/no calls and applies dependency pruning before averaging.
     """
-    api_base    = os.environ.get("VLLM_API_BASE", "http://127.0.0.1:8000/v1").rstrip("/")
-    api_key     = os.environ.get("VLLM_API_KEY", "EMPTY")
-    model       = os.environ.get("JUDGE_MODEL", "Qwen3.5-35B-A3B")
-    max_workers = int(os.environ.get("DPG_MAX_WORKERS", "4"))
-    timeout     = int(os.environ.get("DPG_TIMEOUT", "400"))
-    max_retries = int(os.environ.get("DPG_MAX_RETRIES", "4"))
+    api_base          = os.environ.get("VLLM_API_BASE", "http://127.0.0.1:8000/v1").rstrip("/")
+    api_key           = os.environ.get("VLLM_API_KEY", "EMPTY")
+    model             = os.environ.get("JUDGE_MODEL", "Qwen3.5-35B-A3B")
+    max_workers       = int(os.environ.get("DPG_MAX_WORKERS", "4"))
+    timeout           = int(os.environ.get("DPG_TIMEOUT", "400"))
+    max_retries       = int(os.environ.get("DPG_MAX_RETRIES", "4"))
+    retry_temperature = float(os.environ.get("DPG_RETRY_TEMPERATURE", "0.3"))
 
     n = len(todo_rows)
     if n == 0:
@@ -404,7 +416,8 @@ def _score_dpg_in_place(todo_rows):
 
     questions_by_iid = _load_dpg_csv()
     print(f"[dpg-score] {n} images to score; api_base={api_base} model={model} "
-          f"workers={max_workers}; loaded {len(questions_by_iid)} prompt entries from CSV")
+          f"workers={max_workers} retry_temp={retry_temperature}; "
+          f"loaded {len(questions_by_iid)} prompt entries from CSV")
 
     def task(i):
         r = todo_rows[i]
@@ -418,6 +431,7 @@ def _score_dpg_in_place(todo_rows):
             r["image_path"], meta["item_id"], questions_by_iid,
             api_base=api_base, api_key=api_key, model=model,
             timeout=timeout, max_retries=max_retries,
+            retry_temperature=retry_temperature,
         )
         return i, score
 
