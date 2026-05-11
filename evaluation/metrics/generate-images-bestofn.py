@@ -55,11 +55,30 @@ def _load_wise(path):
     return [{"prompt": row["Prompt"], "metadata": row} for row in data]
 
 
+def _load_dpg(path):
+    # prompts.jsonl rows are pre-sorted by prompt_id (first-appearance order
+    # from dpg_bench.csv). sample_id = prompt_id; item_id (string) is the
+    # CSV key that score-images.py uses to look up questions/dependencies.
+    items = []
+    with open(path, "r") as f:
+        for ln in f:
+            ln = ln.strip()
+            if not ln:
+                continue
+            row = json.loads(ln)
+            items.append({"prompt": row["prompt"],
+                          "metadata": {"prompt_id": row["prompt_id"],
+                                       "item_id":   row["item_id"]}})
+    items.sort(key=lambda x: x["metadata"]["prompt_id"])
+    return items
+
+
 _DATASET_LOADERS = {
-    "drawbench-unique": ("test.txt", _load_txt),
-    "ocr":              ("test.txt", _load_txt),
+    "drawbench-unique": ("test.txt",            _load_txt),
+    "ocr":              ("test.txt",            _load_txt),
     "geneval":          ("test_metadata.jsonl", _load_jsonl),
-    "wise":             ("merge.json", _load_wise),
+    "wise":             ("merge.json",          _load_wise),
+    "dpg_bench":        ("prompts.jsonl",       _load_dpg),
 }
 
 
@@ -314,7 +333,7 @@ def parse_args():
                          "SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, "
                          "diffusion-dpo-sd3, realalign-sd3.")
     ap.add_argument("--dataset", required=True,
-                    help="One of: drawbench-unique, ocr, geneval, wise")
+                    help="One of: drawbench-unique, ocr, geneval, wise, dpg_bench")
     ap.add_argument("--output_dir", required=True)
     ap.add_argument("--gpus", required=True, metavar="0,1,2,3",
                     help="Comma-separated GPU IDs to dispatch to.")

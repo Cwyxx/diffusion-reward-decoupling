@@ -15,8 +15,8 @@
 #   bash evaluation/run-bestofn.sh "0,1,2,3" flowgrpo-pickscore-sd3 geneval          32
 #   bash evaluation/run-bestofn.sh "0,1,2,3" base-sd3               wise             32
 #
-# WISE-specific: requires a vLLM OpenAI-compatible endpoint serving the
-# judge model (default Qwen3.5-35B-A3B). Set VLLM_API_BASE / VLLM_API_KEY
+# WISE / DPG-Bench: both require a vLLM OpenAI-compatible endpoint serving
+# the judge model (default Qwen3.5-35B-A3B). Set VLLM_API_BASE / VLLM_API_KEY
 # / JUDGE_MODEL to override defaults. See evaluation/benchmarks/WISE/README.md.
 #
 # Method suffix selects the model family:
@@ -34,7 +34,7 @@ export TOKENIZERS_PARALLELISM=False
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
 method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench)}
 n_max=${4:?n_max (e.g. 32)}
 
 # ---- Family-aware defaults (derived from method suffix) ----
@@ -66,6 +66,7 @@ case "${dataset}" in
     ocr)              metric_list=(ocr) ;;
     geneval)          metric_list=(geneval) ;;
     wise)             metric_list=(wise) ;;
+    dpg_bench)        metric_list=(dpg-score) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -103,11 +104,11 @@ python "${GENERATE_PY}" \
     --num_inference_steps "${num_inference_steps}" \
     --guidance_scale "${guidance_scale}"
 
-# ---- Stage 2 prep (WISE only): verify vLLM judge endpoint is up ----
-# WISE judging hits a remote vLLM OpenAI-compatible endpoint over HTTP, so
-# fail fast here if it isn't reachable; otherwise score-images.py would
-# burn time queuing 32K HTTP requests against a dead socket.
-if [[ "${dataset}" == "wise" ]]; then
+# ---- Stage 2 prep (WISE / DPG-Bench): verify vLLM judge endpoint is up ----
+# WISE and DPG-Bench judging both hit a remote vLLM OpenAI-compatible endpoint
+# over HTTP, so fail fast here if it isn't reachable; otherwise score-images.py
+# would burn time queuing many thousands of HTTP requests against a dead socket.
+if [[ "${dataset}" == "wise" || "${dataset}" == "dpg_bench" ]]; then
     : "${VLLM_API_BASE:=http://127.0.0.1:8000/v1}"
     : "${VLLM_API_KEY:=EMPTY}"
     : "${JUDGE_MODEL:=Qwen3.5-35B-A3B}"

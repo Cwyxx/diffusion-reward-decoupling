@@ -14,7 +14,7 @@ gpus="${1:-0,1,2,3,4,5,6,7}"
 n_max="${2:-32}"
 
 methods=(base dpo inpo spo)
-datasets=(geneval)
+datasets=(geneval wise dpg_bench)
 
 for method in "${methods[@]}"; do
     for dataset in "${datasets[@]}"; do

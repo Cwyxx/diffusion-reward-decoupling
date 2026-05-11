@@ -14,7 +14,7 @@ vllm serve /data_center/data2/dataset/chenwy/21164-data/model-ckpt/Qwen3.5-35B-A
     --dtype bfloat16 \
     --max-model-len 16384 \
     --gpu-memory-utilization 0.75 \
-    --max-num-seqs 1 \
+    --max-num-seqs 2 \
     --limit-mm-per-prompt.image 1 \
     --limit-mm-per-prompt.video 0 \
     --mm-processor-cache-gb 0 \

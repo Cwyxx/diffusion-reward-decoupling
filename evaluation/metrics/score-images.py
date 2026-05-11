@@ -25,7 +25,7 @@ from flow_grpo.rewards import multi_score
 
 AVAILABLE_METRICS = [
     "pickscore", "imagereward", "aesthetic", "hpsv3", "deqa", "visualquality_r1",
-    "ocr", "geneval", "wise",
+    "ocr", "geneval", "wise", "dpg-score",
 ]
 
 # Metrics whose scoring functions require small batches.
@@ -55,6 +55,9 @@ def run_metric(metric, image_paths, prompts, metadatas, batch_size, device):
         # main() routes it to _score_wise_in_place directly; reaching this
         # branch means an unexpected caller bypassed that dispatch.
         raise RuntimeError("metric=wise must be routed via _score_wise_in_place")
+
+    if metric == "dpg-score":
+        raise RuntimeError("metric=dpg-score must be routed via _score_dpg_in_place")
 
     scoring_fn = multi_score(device, {metric: 1.0})
     all_scores = []
@@ -267,6 +270,164 @@ def _score_wise_in_place(todo_rows):
             todo_rows[i]["scores"]["wise"] = score
 
 
+# ------------------------- DPG-Bench judge -------------------------
+# DPG-Score for Best-of-N: per image, ask the vLLM-served VLM each of the
+# prompt's yes/no questions, apply dependency pruning (a question's score
+# is forced to 0 if any of its parents was answered "no"), then mean. The
+# CSV (questions/dependencies) lives in the ELLA upstream layout; we read
+# it once at scorer init and key by item_id (string) from row metadata.
+
+_DPG_CSV_PATH = os.path.abspath(os.path.join(
+    _REPO_ROOT, "evaluation", "benchmarks", "ELLA", "dpg_bench", "dpg_bench.csv"
+))
+
+_DPG_USER_PROMPT_TEMPLATE = """You are answering a yes/no visual question about the image.
+
+Question: {question}
+
+Look at the image carefully. Respond with exactly one word: yes or no.
+Do not include any punctuation, explanation, or extra words. If you are not confident, answer no."""
+
+
+def _load_dpg_csv(csv_path=_DPG_CSV_PATH):
+    """Return {item_id: {'qid2question': {qid: str}, 'qid2dependency': {qid: [int]}}}.
+
+    Parses the ELLA upstream dpg_bench.csv. Unlike compute_dpg_bench.py which
+    drops the first data row (lossy quirk), this loader keeps every question.
+    """
+    import pandas as pd
+    df = pd.read_csv(csv_path)
+    out = {}
+    for _, line in df.iterrows():
+        iid = line.item_id
+        qid = int(line.proposition_id)
+        deps = [int(d.strip()) for d in str(line.dependency).split(",")]
+        if iid not in out:
+            out[iid] = {"qid2question": {}, "qid2dependency": {}}
+        out[iid]["qid2question"][qid] = line.question_natural_language
+        out[iid]["qid2dependency"][qid] = deps
+    return out
+
+
+def _dpg_build_messages(question: str, image_base64: str) -> list:
+    return [
+        {
+            "role": "system",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "You are a precise visual question answering assistant. Answer strictly with 'yes' or 'no' based on the image.",
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": _DPG_USER_PROMPT_TEMPLATE.format(question=question),
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image_base64}"},
+                },
+            ],
+        },
+    ]
+
+
+def _dpg_extract_yesno(txt: str) -> float:
+    """Return 1.0 for yes, 0.0 for no (or unparseable — conservative)."""
+    m = re.search(r"\b(yes|no)\b", txt, re.IGNORECASE)
+    if m:
+        return 1.0 if m.group(1).lower() == "yes" else 0.0
+    return 0.0
+
+
+def _dpg_judge_one(image_path, item_id, questions_by_iid, *,
+                   api_base, api_key, model, timeout, max_retries):
+    if item_id not in questions_by_iid:
+        raise KeyError(f"DPG judge: item_id {item_id!r} not found in CSV "
+                       f"(image={image_path})")
+    qd = questions_by_iid[item_id]
+    with open(image_path, "rb") as f:
+        img64 = base64.b64encode(f.read()).decode()
+
+    qid2score = {}
+    for qid, question in qd["qid2question"].items():
+        messages = _dpg_build_messages(question, img64)
+        last_err = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                txt = _wise_chat_completion(
+                    messages, api_base=api_base, api_key=api_key,
+                    model=model, timeout=timeout,
+                )
+                qid2score[qid] = _dpg_extract_yesno(txt)
+                break
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+        else:
+            raise RuntimeError(
+                f"DPG judge failed after {max_retries} attempts on "
+                f"{image_path} qid={qid}: {last_err}"
+            )
+
+    # Dependency pruning: zero out children if any parent answered "no".
+    for qid, parents in qd["qid2dependency"].items():
+        for p in parents:
+            if p == 0:
+                continue
+            if qid2score.get(p, 1.0) == 0.0:
+                qid2score[qid] = 0.0
+                break
+
+    return sum(qid2score.values()) / len(qid2score)
+
+
+def _score_dpg_in_place(todo_rows):
+    """Fill todo_rows[i]['scores']['dpg-score'] in place via vLLM judge.
+
+    Same HTTP/threading shape as _score_wise_in_place; inner per-image task
+    issues ~13 yes/no calls and applies dependency pruning before averaging.
+    """
+    api_base    = os.environ.get("VLLM_API_BASE", "http://127.0.0.1:8000/v1").rstrip("/")
+    api_key     = os.environ.get("VLLM_API_KEY", "EMPTY")
+    model       = os.environ.get("JUDGE_MODEL", "Qwen3.5-35B-A3B")
+    max_workers = int(os.environ.get("DPG_MAX_WORKERS", "4"))
+    timeout     = int(os.environ.get("DPG_TIMEOUT", "400"))
+    max_retries = int(os.environ.get("DPG_MAX_RETRIES", "4"))
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+
+    questions_by_iid = _load_dpg_csv()
+    print(f"[dpg-score] {n} images to score; api_base={api_base} model={model} "
+          f"workers={max_workers}; loaded {len(questions_by_iid)} prompt entries from CSV")
+
+    def task(i):
+        r = todo_rows[i]
+        meta = r.get("metadata") or {}
+        if "item_id" not in meta:
+            raise KeyError(
+                f"DPG judge needs metadata.item_id; row for {r['image_path']} "
+                f"has metadata keys {sorted(meta.keys())}"
+            )
+        score = _dpg_judge_one(
+            r["image_path"], meta["item_id"], questions_by_iid,
+            api_base=api_base, api_key=api_key, model=model,
+            timeout=timeout, max_retries=max_retries,
+        )
+        return i, score
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(task, i) for i in range(n)]
+        for fut in tqdm(concurrent.futures.as_completed(futures), total=n, desc="dpg-score"):
+            i, score = fut.result()
+            todo_rows[i]["scores"]["dpg-score"] = score
+
+
 def main(args):
     results_path = os.path.join(args.output_dir, "evaluation_results.jsonl")
     with open(results_path, "r") as f:
@@ -285,6 +446,10 @@ def main(args):
 
         if metric == "wise":
             _score_wise_in_place(todo)
+            continue
+
+        if metric == "dpg-score":
+            _score_dpg_in_place(todo)
             continue
 
         image_paths = [r["image_path"] for r in todo]
