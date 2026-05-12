@@ -34,7 +34,7 @@ export TOKENIZERS_PARALLELISM=False
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
 method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval)}
 n_max=${4:?n_max (e.g. 32)}
 
 # ---- Family-aware defaults (derived from method suffix) ----
@@ -67,6 +67,7 @@ case "${dataset}" in
     geneval)          metric_list=(geneval) ;;
     wise)             metric_list=(wise) ;;
     dpg_bench)        metric_list=(dpg-score) ;;
+    spatial_geneval)  metric_list=(spatial-geneval) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -108,7 +109,7 @@ python "${GENERATE_PY}" \
 # WISE and DPG-Bench judging both hit a remote vLLM OpenAI-compatible endpoint
 # over HTTP, so fail fast here if it isn't reachable; otherwise score-images.py
 # would burn time queuing many thousands of HTTP requests against a dead socket.
-if [[ "${dataset}" == "wise" || "${dataset}" == "dpg_bench" ]]; then
+if [[ "${dataset}" == "wise" || "${dataset}" == "dpg_bench" || "${dataset}" == "spatial_geneval" ]]; then
     : "${VLLM_API_BASE:=http://127.0.0.1:8000/v1}"
     : "${VLLM_API_KEY:=EMPTY}"
     : "${JUDGE_MODEL:=Qwen3.5-35B-A3B}"

@@ -80,6 +80,15 @@ WISE_CATEGORY_SPEC = [
 ]
 
 
+SPATIAL_GENEVAL_METRIC_KEYS = [
+    ("spatial-geneval", "Overall"),
+    ("spatial-geneval-foundation", "Foundation"),
+    ("spatial-geneval-perception", "Perception"),
+    ("spatial-geneval-reasoning", "Reasoning"),
+    ("spatial-geneval-interaction", "Interaction"),
+]
+
+
 def _wise_category_for(prompt_id):
     for name, (lo, hi), _w in WISE_CATEGORY_SPEC:
         if lo <= prompt_id < hi:
@@ -193,6 +202,16 @@ def write_per_prompt_jsonl(rows, metric, threshold, out_path):
         n_max = max(seed_map.keys()) + 1
         scores = np.array([seed_map[i][0] for i in range(n_max)])
         paths = [seed_map[i][1] for i in range(n_max)]
+        if threshold is None:
+            best_seed = int(scores.argmax())
+            out_rows.append({
+                "sample_id": sid,
+                "prompt": prompts[sid],
+                "max_score": float(scores.max()),
+                "best_seed_index": best_seed,
+                "best_image_path": paths[best_seed],
+            })
+            continue
         passed = scores >= threshold
         if not passed.any():
             continue
@@ -455,6 +474,65 @@ def _plot_wise_breakdown(per_cat_curves, overall_curve, out_path):
     plt.close(fig)
 
 
+def _aggregate_spatial_geneval(rows, bestofn_dir, plots_dir, csv_dir):
+    """SpatialGenEval: 5 continuous BoN curves over the full prompt set."""
+    out = {}
+    curves = {}
+    n_max = None
+
+    for key, _label in SPATIAL_GENEVAL_METRIC_KEYS:
+        mat = build_score_matrix(rows, key)
+        if mat is None:
+            raise ValueError(f"No '{key}' scores found; run scoring first.")
+        curve = aggregate_curve(mat, kind="continuous")
+        curves[key] = curve
+        n_max = mat.shape[1]
+        out[key] = {
+            "kind": "continuous",
+            "n_max": n_max,
+            "num_prompts": mat.shape[0],
+            "curve": curve,
+            "ceiling_lift": curve[n_max] - curve[1],
+        }
+        write_curve_csv(curve, os.path.join(csv_dir, f"{key}_curve.csv"))
+
+    plot_curve(curves["spatial-geneval"], "spatial-geneval", "continuous", None,
+               os.path.join(plots_dir, "spatial_geneval_curve_log.png"))
+
+    _plot_spatial_geneval_breakdown(
+        curves, os.path.join(plots_dir, "spatial_geneval_breakdown_curve_log.png"))
+
+    write_per_prompt_jsonl(
+        rows, "spatial-geneval", None,
+        os.path.join(bestofn_dir, "per_prompt_spatial_geneval.jsonl"),
+    )
+    return out
+
+
+def _plot_spatial_geneval_breakdown(curves, out_path):
+    ns = sorted(curves["spatial-geneval"].keys())
+    fig, ax = plt.subplots(figsize=(6, 4))
+    cmap = plt.get_cmap("tab10")
+    sub_keys = [k for k, _ in SPATIAL_GENEVAL_METRIC_KEYS if k != "spatial-geneval"]
+    labels = dict(SPATIAL_GENEVAL_METRIC_KEYS)
+    for i, key in enumerate(sub_keys):
+        ys = [curves[key][n] for n in ns]
+        ax.plot(ns, ys, marker="o", markersize=2.5, linewidth=1.2,
+                color=cmap(i), label=labels[key], alpha=0.85)
+    overall_ys = [curves["spatial-geneval"][n] for n in ns]
+    ax.plot(ns, overall_ys, marker="o", markersize=4, linewidth=2.4,
+            color="black", label="Overall")
+    ax.set_xscale("log", base=2)
+    ax.set_xlabel("N (samples per prompt)")
+    ax.set_ylabel("Best-of-N accuracy")
+    ax.set_title("SpatialGenEval BoN: per-category + Overall")
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(fontsize=8, loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def plot_curve(curve, metric, kind, threshold, out_path):
     ns = sorted(curve.keys())
     ys = [curve[n] for n in ns]
@@ -491,7 +569,12 @@ def main(args):
     os.makedirs(csv_dir, exist_ok=True)
 
     out = {}
+    if any(k.startswith("spatial-geneval") for k in metrics):
+        out.update(_aggregate_spatial_geneval(rows, bestofn_dir, plots_dir, csv_dir))
+
     for metric in metrics:
+        if metric.startswith("spatial-geneval") or metric == "_spatial_geneval_correct":
+            continue
         if metric == "geneval":
             # GenEval has its own per-dimension + macro-avg-Overall path.
             out.update(_aggregate_geneval(rows, bestofn_dir, plots_dir, csv_dir))

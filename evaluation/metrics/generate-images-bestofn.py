@@ -79,6 +79,7 @@ _DATASET_LOADERS = {
     "geneval":          ("test_metadata.jsonl", _load_jsonl),
     "wise":             ("merge.json",          _load_wise),
     "dpg_bench":        ("prompts.jsonl",       _load_dpg),
+    "spatial_geneval":  ("prompts.jsonl",       _load_jsonl),
 }
 
 

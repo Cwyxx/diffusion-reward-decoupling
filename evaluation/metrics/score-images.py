@@ -25,7 +25,7 @@ from flow_grpo.rewards import multi_score
 
 AVAILABLE_METRICS = [
     "pickscore", "imagereward", "aesthetic", "hpsv3", "deqa", "visualquality_r1",
-    "ocr", "geneval", "wise", "dpg-score",
+    "ocr", "geneval", "wise", "dpg-score", "spatial-geneval",
 ]
 
 # Metrics whose scoring functions require small batches.
@@ -58,6 +58,9 @@ def run_metric(metric, image_paths, prompts, metadatas, batch_size, device):
 
     if metric == "dpg-score":
         raise RuntimeError("metric=dpg-score must be routed via _score_dpg_in_place")
+
+    if metric == "spatial-geneval":
+        raise RuntimeError("metric=spatial-geneval must be routed via _score_spatial_geneval_in_place")
 
     scoring_fn = multi_score(device, {metric: 1.0})
     all_scores = []
@@ -442,6 +445,167 @@ def _score_dpg_in_place(todo_rows):
             todo_rows[i]["scores"]["dpg-score"] = score
 
 
+# ------------------------- SpatialGenEval judge -------------------------
+# Mirrors evaluation/benchmarks/SpatialGenEval/scripts/spatialgeneval_stage1_eval.py
+# but: (a) called per-image inside the BoN scoring loop, (b) replaces the
+# upstream Qwen2.5-VL-72B with Qwen3.5-35B-A3B (the WISE judge), (c) emits 5
+# score keys per image so BoN can plot one curve per category.
+
+SPATIAL_GENEVAL_CATEGORIES = {
+    "foundation": (0, 1),          # Object, Attribute
+    "perception": (2, 3, 4),       # Position, Orientation, Layout
+    "reasoning": (5, 6, 7),        # Comparison, Proximity, Occlusion
+    "interaction": (8, 9),         # Motion, Causal
+}
+
+_SGE_VLM_CONTENT_TEMPLATE = '''
+### Task Description:
+You are tasked with carefully examining the provided image and answering the following 10 multiple-choice questions. You MUST ONLY rely on the provided image to answer the questions. DO NOT use any external resources like world knowledge or external information beyond the provided image.
+
+### Multiple-Choice Questions:
+##Multiple-Choice Questions##
+
+### Instructions:
+1. Answer these 10 questions on a separate 10 lines, beginning with the correct choice option (A/B/C/D/E/..., not the number) and followed by a detailed reason (in the same line as answer).
+2. Maintain the exact order of the questions in your answers.
+3. Provide only one answer per question.
+4. Each answer must be on its own line.
+5. Ensure the index of answers matches the index of questions.
+6. Select the option 'E: None' when the image can not answer the question.
+
+### Output Format (Example, 10 lines for 10 questions):
+E: None - The image does not depict a log or any specific object categories clearly enough to match any listed options.
+B: Large and brown bear, small and red fox - The bear is visibly larger and brown, while the fox is smaller and red.
+C: The bear is on the left and the fox is on the right - The bear appears on the left and the fox on the right side of the image.
+A: The bear is facing the fox - The bear is looking directly at the fox, indicating it is facing the fox.
+B: They are positioned opposite each other on the left and right - They are facing each other from opposite sides of the image.
+E: None - The image does not provide clear indication of height comparison that matches the provided statements.
+B: They are positioned closely together - Bear and fox are seen near each other, interacting without any major distance or separation.
+E: None - The image does not show any notable occlusion from logs or surrounding objects.
+E: None - The image does not show the bear initiating any of the described motions.
+E: None - No direct causal results of the bear's movement are depicted in the image.
+'''
+
+
+def _sge_build_messages(metadata: dict, img_b64: str) -> list:
+    """Build the chat-completion messages for one image."""
+    question_texts = [item.strip() for item in metadata["questions"]]
+    vlm_prompt = _SGE_VLM_CONTENT_TEMPLATE.replace(
+        "##Multiple-Choice Questions##", "\n".join(question_texts)
+    )
+    return [
+        {"role": "system", "content": "You are a professional image critic."},
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": vlm_prompt},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{img_b64}"},
+                },
+            ],
+        },
+    ]
+
+
+def _sge_parse_letters(text: str):
+    """Return a 10-vector of A/B/C/D/E letters, or None if line count fails."""
+    text = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL)
+    text = re.sub(r"</think>\s*", "", text)
+    preds_cot = [line.strip() for line in text.strip().split("\n") if line.strip()]
+    if len(preds_cot) != 10:
+        return None
+    preds = []
+    for cot in preds_cot:
+        letter = cot[0].upper() if cot else None
+        preds.append(letter if letter in {"A", "B", "C", "D", "E"} else None)
+    return preds
+
+
+def _sge_judge_one(image_path, metadata, *, api_base, api_key, model,
+                   timeout, max_retries, rollouts, vote_threshold):
+    with open(image_path, "rb") as f:
+        img64 = base64.b64encode(f.read()).decode()
+    messages = _sge_build_messages(metadata, img64)
+
+    rollout_preds = []
+    for _ in range(rollouts):
+        last_err = None
+        for attempt in range(1, max_retries + 1):
+            try:
+                txt = _wise_chat_completion(
+                    messages, api_base=api_base, api_key=api_key,
+                    model=model, timeout=timeout, temperature=1.0,
+                )
+                preds = _sge_parse_letters(txt)
+                if preds is not None and len(preds) == 10:
+                    rollout_preds.append(preds)
+                    break
+                last_err = f"letter parse failed; raw={txt[:200]!r}"
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+                if attempt == max_retries:
+                    raise
+        else:
+            raise RuntimeError(
+                f"SGE judge gave unparseable output {max_retries}x for "
+                f"{image_path}: {last_err}"
+            )
+
+    gold = metadata["answers"]
+    correct = []
+    for qi in range(10):
+        votes = [rollout_preds[ri][qi] for ri in range(rollouts)]
+        correct.append(int(sum(v == gold[qi] for v in votes) >= vote_threshold))
+
+    scores = {"spatial-geneval": sum(correct) / 10.0}
+    for cat, idxs in SPATIAL_GENEVAL_CATEGORIES.items():
+        scores[f"spatial-geneval-{cat}"] = sum(correct[i] for i in idxs) / len(idxs)
+    scores["_spatial_geneval_correct"] = correct
+    return scores
+
+
+def _score_spatial_geneval_in_place(todo_rows):
+    api_base = os.environ.get("VLLM_API_BASE", "http://127.0.0.1:8000/v1").rstrip("/")
+    api_key = os.environ.get("VLLM_API_KEY", "EMPTY")
+    model = os.environ.get("JUDGE_MODEL", "Qwen3.5-35B-A3B")
+    max_workers = int(os.environ.get("SGE_MAX_WORKERS", "8"))
+    timeout = int(os.environ.get("SGE_TIMEOUT", "400"))
+    max_retries = int(os.environ.get("SGE_MAX_RETRIES", "4"))
+    rollouts = int(os.environ.get("SGE_ROLLOUTS", "5"))
+    vote_thr = int(os.environ.get("SGE_VOTE_THRESHOLD", "4"))
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+    print(f"[spatial-geneval] {n} images to score; api_base={api_base} "
+          f"model={model} workers={max_workers} rollouts={rollouts} "
+          f"vote_threshold={vote_thr}")
+
+    def task(i):
+        r = todo_rows[i]
+        meta = r.get("metadata") or {}
+        if isinstance(meta.get("metadata"), dict):
+            meta = meta["metadata"]
+        for k in ("questions", "answers", "question_type"):
+            if k not in meta:
+                raise KeyError(f"SGE judge needs metadata.{k} for {r['image_path']}")
+        scores = _sge_judge_one(
+            r["image_path"], meta,
+            api_base=api_base, api_key=api_key, model=model,
+            timeout=timeout, max_retries=max_retries,
+            rollouts=rollouts, vote_threshold=vote_thr,
+        )
+        return i, scores
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as ex:
+        futures = [ex.submit(task, i) for i in range(n)]
+        for fut in tqdm(concurrent.futures.as_completed(futures), total=n,
+                        desc="spatial-geneval"):
+            i, scores = fut.result()
+            todo_rows[i]["scores"].update(scores)
+
+
 def main(args):
     results_path = os.path.join(args.output_dir, "evaluation_results.jsonl")
     with open(results_path, "r") as f:
@@ -464,6 +628,10 @@ def main(args):
 
         if metric == "dpg-score":
             _score_dpg_in_place(todo)
+            continue
+
+        if metric == "spatial-geneval":
+            _score_spatial_geneval_in_place(todo)
             continue
 
         image_paths = [r["image_path"] for r in todo]
