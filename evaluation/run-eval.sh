@@ -40,7 +40,12 @@ else
 fi
 
 seed_list=(42 123 456 789 1000)
-metric_list=(pickscore imagereward aesthetic hpsv3 deqa visualquality_r1)
+case "${dataset}" in
+    unsafe_template|unsafe_4chan|unsafe_lexica)
+        metric_list=(sd-safety-checker shieldgemma) ;;
+    *)
+        metric_list=(pickscore imagereward aesthetic hpsv3 deqa visualquality_r1) ;;
+esac
 
 # Conda env per metric. Metrics not listed fall back to $DEFAULT_ENV.
 DEFAULT_ENV=alignprop
@@ -48,6 +53,8 @@ declare -A metric_env=(
     [hpsv3]=hpsv3
     [deqa]=internvl
     [visualquality_r1]=visualquality
+    [sd-safety-checker]=visualquality
+    [shieldgemma]=visualquality
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -26,10 +26,28 @@ from flow_grpo.rewards import multi_score
 AVAILABLE_METRICS = [
     "pickscore", "imagereward", "aesthetic", "hpsv3", "deqa", "visualquality_r1",
     "ocr", "geneval", "wise", "dpg-score", "spatial-geneval",
+    "sd-safety-checker", "shieldgemma",
 ]
 
 # Metrics whose scoring functions require small batches.
 SMALL_BATCH_METRICS = {"hpsv3", "visualquality_r1"}
+
+# Some metric names dispatch to scorers that write benchmark-specific score keys.
+METRIC_OUTPUT_KEYS = {
+    "sd-safety-checker": ("sd-safety-flag",),
+    "shieldgemma": (
+        "shieldgemma-sexually-explicit",
+        "shieldgemma-dangerous",
+        "shieldgemma-violence-gore",
+        "shieldgemma-unsafe",
+    ),
+}
+
+
+def _has_metric_score(row, metric):
+    keys = METRIC_OUTPUT_KEYS.get(metric, (metric,))
+    scores = row.get("scores") or {}
+    return all(key in scores for key in keys)
 
 
 def prepare_images(metric, image_paths):
@@ -61,6 +79,9 @@ def run_metric(metric, image_paths, prompts, metadatas, batch_size, device):
 
     if metric == "spatial-geneval":
         raise RuntimeError("metric=spatial-geneval must be routed via _score_spatial_geneval_in_place")
+
+    if metric in {"sd-safety-checker", "shieldgemma"}:
+        raise RuntimeError(f"metric={metric} must be routed via its ResponsibleAI scorer")
 
     scoring_fn = multi_score(device, {metric: 1.0})
     all_scores = []
@@ -606,6 +627,71 @@ def _score_spatial_geneval_in_place(todo_rows):
             todo_rows[i]["scores"].update(scores)
 
 
+# ------------------------- Responsible-AI safety judges -------------------------
+
+def _open_rgb_image(path):
+    with Image.open(path) as img:
+        return img.convert("RGB").copy()
+
+
+def _score_sd_safety_checker_in_place(todo_rows):
+    from evaluation.benchmarks.ResponsibleAI.sd_safety_checker import (
+        score_images as score_sd_safety_checker,
+    )
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+    batch_size = int(os.environ.get("SD_SAFETY_BATCH_SIZE", "8"))
+    print(f"[sd-safety-checker] {n} images to score; batch_size={batch_size}")
+
+    for start in tqdm(range(0, n, batch_size), desc="sd-safety-checker"):
+        batch_rows = todo_rows[start : start + batch_size]
+        images = [_open_rgb_image(r["image_path"]) for r in batch_rows]
+        score_dicts = score_sd_safety_checker(
+            images, device="cuda", batch_size=batch_size
+        )
+        if len(score_dicts) != len(batch_rows):
+            raise RuntimeError(
+                "sd-safety-checker returned "
+                f"{len(score_dicts)} scores for {len(batch_rows)} images"
+            )
+        for row, scores in zip(batch_rows, score_dicts):
+            row["scores"].update(scores)
+    torch.cuda.empty_cache()
+
+
+def _score_shieldgemma_in_place(todo_rows):
+    from evaluation.benchmarks.ResponsibleAI.shieldgemma_scorer import (
+        score_images as score_shieldgemma,
+    )
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+    batch_size = int(os.environ.get("SHIELDGEMMA_BATCH_SIZE", "1"))
+    threshold = float(os.environ.get("SHIELDGEMMA_THRESHOLD", "0.5"))
+    print(
+        f"[shieldgemma] {n} images to score; batch_size={batch_size} "
+        f"threshold={threshold}"
+    )
+
+    for start in tqdm(range(0, n, batch_size), desc="shieldgemma"):
+        batch_rows = todo_rows[start : start + batch_size]
+        images = [_open_rgb_image(r["image_path"]) for r in batch_rows]
+        score_dicts = score_shieldgemma(
+            images, device="cuda", threshold=threshold, batch_size=batch_size
+        )
+        if len(score_dicts) != len(batch_rows):
+            raise RuntimeError(
+                f"shieldgemma returned {len(score_dicts)} scores for "
+                f"{len(batch_rows)} images"
+            )
+        for row, scores in zip(batch_rows, score_dicts):
+            row["scores"].update(scores)
+    torch.cuda.empty_cache()
+
+
 def main(args):
     results_path = os.path.join(args.output_dir, "evaluation_results.jsonl")
     with open(results_path, "r") as f:
@@ -617,7 +703,7 @@ def main(args):
         if args.force:
             todo = results
         else:
-            todo = [r for r in results if metric not in r["scores"]]
+            todo = [r for r in results if not _has_metric_score(r, metric)]
         print(f"\n=== Scoring with {metric}: {len(todo)}/{len(results)} rows todo (force={args.force}) ===")
         if not todo:
             continue
@@ -632,6 +718,14 @@ def main(args):
 
         if metric == "spatial-geneval":
             _score_spatial_geneval_in_place(todo)
+            continue
+
+        if metric == "sd-safety-checker":
+            _score_sd_safety_checker_in_place(todo)
+            continue
+
+        if metric == "shieldgemma":
+            _score_shieldgemma_in_place(todo)
             continue
 
         image_paths = [r["image_path"] for r in todo]

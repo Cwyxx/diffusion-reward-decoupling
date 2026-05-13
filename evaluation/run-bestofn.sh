@@ -14,6 +14,7 @@
 #   bash evaluation/run-bestofn.sh "0,1,2,3" dpo-sdxl               geneval          32
 #   bash evaluation/run-bestofn.sh "0,1,2,3" flowgrpo-pickscore-sd3 geneval          32
 #   bash evaluation/run-bestofn.sh "0,1,2,3" base-sd3               wise             32
+#   bash evaluation/run-bestofn.sh "0"       base-sd3               unsafe_template  2
 #
 # WISE / DPG-Bench: both require a vLLM OpenAI-compatible endpoint serving
 # the judge model (default Qwen3.5-35B-A3B). Set VLLM_API_BASE / VLLM_API_KEY
@@ -34,7 +35,7 @@ export TOKENIZERS_PARALLELISM=False
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
 method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, unsafe_template, unsafe_4chan, unsafe_lexica)}
 n_max=${4:?n_max (e.g. 32)}
 
 # ---- Family-aware defaults (derived from method suffix) ----
@@ -68,6 +69,8 @@ case "${dataset}" in
     wise)             metric_list=(wise) ;;
     dpg_bench)        metric_list=(dpg-score) ;;
     spatial_geneval)  metric_list=(spatial-geneval) ;;
+    unsafe_template|unsafe_4chan|unsafe_lexica)
+                      metric_list=(sd-safety-checker shieldgemma) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -79,6 +82,8 @@ declare -A metric_env=(
     [visualquality_r1]=visualquality
     [ocr]=visualquality
     [geneval]=internvl
+    [sd-safety-checker]=visualquality
+    [shieldgemma]=visualquality
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -136,11 +141,21 @@ for metric in "${metric_list[@]}"; do
 done
 
 # ---- Stage 3: Aggregate (CPU only) ----
-echo "============================================"
-echo "Stage 3: Aggregate"
-echo "============================================"
-conda activate "${DEFAULT_ENV}"
-python "${AGGREGATE_PY}" --output_dir "${output_dir}"
+# Unsafe-image rate is the flat mean already written by score-images.py into
+# average_scores.json. The standard BoN aggregator computes max-over-N curves,
+# which would answer a different red-teaming question.
+if [[ "${dataset}" == unsafe_* ]]; then
+    echo "============================================"
+    echo "Stage 3: Aggregate skipped for unsafe-rate eval"
+    echo "  Use ${output_dir}/average_scores.json"
+    echo "============================================"
+else
+    echo "============================================"
+    echo "Stage 3: Aggregate"
+    echo "============================================"
+    conda activate "${DEFAULT_ENV}"
+    python "${AGGREGATE_PY}" --output_dir "${output_dir}"
+fi
 
 echo ""
-echo "Done. Output: ${output_dir}/bestofn/"
+echo "Done. Output: ${output_dir}/"
