@@ -60,6 +60,12 @@ BINARY_METRICS = {"ocr", "geneval"}
 # capturing sub-threshold improvements that binary aggregation discards.
 DUAL_METRICS = {"ocr"}
 
+# DPG-Bench's reportable "Average DPG-Score" averages a fixed number of
+# images per prompt. The ELLA official protocol uses 4 (a 2x2 grid); we
+# mirror that by averaging the first 4 seeds (seed_index 0..3). Best-of-N
+# (capability upper bound) instead takes the max over all N seeds.
+AVG_DPG_NUM_SEEDS = 4
+
 # The 6 GenEval evaluation dimensions, matching gen_eval.py:321 and the
 # official summary_scores.py grouping. Each prompt's metadata.tag falls
 # in exactly one of these (verified on the 553-prompt benchmark).
@@ -533,6 +539,112 @@ def _plot_spatial_geneval_breakdown(curves, out_path):
     plt.close(fig)
 
 
+def _aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir):
+    """DPG-Bench: two headline numbers (ELLA official protocol).
+
+    * Average DPG-Score: per prompt, mean over the first AVG_DPG_NUM_SEEDS
+      seeds; then mean over prompts. This is the standard reportable score
+      (ELLA evaluates 4 images per prompt).
+    * Best-of-N DPG-Score (capability upper bound): per prompt, max over
+      the N seeds; then mean over prompts -- i.e. the continuous BoN
+      curve's value at n = n_max.
+
+    Emits the usual continuous BoN curve/plot/csv (so the upper-bound
+    curve stays visible), plus the two scalars in curves.json, a
+    dpg_summary.json, and a per-prompt jsonl carrying both views for
+    cross-method row-aligned diffing.
+    """
+    mat = build_score_matrix(rows, "dpg-score")
+    if mat is None:
+        raise ValueError("No 'dpg-score' scores found; run scoring first.")
+    n_prompts, n_max = mat.shape
+
+    # Best-of-N capability-upper-bound curve: mean over prompts of max over
+    # the first n seeds (same maths as the generic continuous path).
+    curve = aggregate_curve(mat, kind="continuous")
+    bestofn_score = curve[n_max]  # == bon_continuous(mat, n_max)
+
+    # Average DPG-Score (ELLA official): per-prompt mean over the first K
+    # seeds, then mean over prompts.
+    k = AVG_DPG_NUM_SEEDS
+    if n_max < k:
+        raise ValueError(
+            f"Average DPG-Score (ELLA setting) needs >= {k} seeds per "
+            f"prompt; score matrix only has n_max={n_max}. Generate more "
+            f"seeds or lower AVG_DPG_NUM_SEEDS."
+        )
+    per_prompt_avg = mat[:, :k].mean(axis=1)          # (n_prompts,)
+    average_dpg_score = float(per_prompt_avg.mean())
+
+    out = {
+        "dpg-score": {
+            "kind": "continuous",
+            "n_max": n_max,
+            "num_prompts": n_prompts,
+            "curve": curve,
+            "ceiling_lift": curve[n_max] - curve[1],
+            "average_dpg_score": average_dpg_score,
+            "average_dpg_num_seeds": k,
+            "bestofn_dpg_score": bestofn_score,
+            "bestofn_n": n_max,
+            "aggregation": (
+                f"average = mean over prompts of mean over first {k} "
+                f"seeds; best-of-N = mean over prompts of max over "
+                f"{n_max} seeds"
+            ),
+        }
+    }
+
+    write_curve_csv(curve, os.path.join(csv_dir, "dpg-score_curve.csv"))
+    plot_curve(curve, "dpg-score", "continuous", None,
+               os.path.join(plots_dir, "dpg-score_curve_log.png"))
+
+    summary = {
+        "average_dpg_score": average_dpg_score,
+        "average_dpg_num_seeds": k,
+        "bestofn_dpg_score": bestofn_score,
+        "bestofn_n": n_max,
+        "num_prompts": n_prompts,
+    }
+    with open(os.path.join(bestofn_dir, "dpg_summary.json"), "w") as f:
+        json.dump(summary, f, indent=2)
+
+    # Per-prompt table (both views), sorted by sample_id so files from
+    # different methods line up row-by-row.
+    grouped = defaultdict(dict)
+    prompts = {}
+    for r in rows:
+        if "dpg-score" not in r["scores"]:
+            continue
+        sid = r["sample_id"]
+        grouped[sid][r.get("seed_index", 0)] = (
+            r["scores"]["dpg-score"], r["image_path"])
+        prompts[sid] = r["prompt"]
+    pp_path = os.path.join(bestofn_dir, "per_prompt_dpg-score.jsonl")
+    with open(pp_path, "w") as f:
+        for sid in sorted(grouped.keys()):
+            seed_map = grouped[sid]
+            m = max(seed_map.keys()) + 1
+            scores = np.array([seed_map[i][0] for i in range(m)])
+            paths = [seed_map[i][1] for i in range(m)]
+            best_seed = int(scores.argmax())
+            f.write(json.dumps({
+                "sample_id": sid,
+                "prompt": prompts[sid],
+                "average_score": float(scores[:k].mean()),
+                "bestofn_score": float(scores.max()),
+                "best_seed_index": best_seed,
+                "best_image_path": paths[best_seed],
+            }, ensure_ascii=False) + "\n")
+
+    # DPG-Bench reports on a 0..100 scale (compute_dpg_bench.py * 100).
+    print(f"  [dpg] Average DPG-Score (first {k} seeds): "
+          f"{average_dpg_score * 100:.4f}")
+    print(f"  [dpg] Best-of-{n_max} DPG-Score (ceiling):   "
+          f"{bestofn_score * 100:.4f}")
+    return out
+
+
 def plot_curve(curve, metric, kind, threshold, out_path):
     ns = sorted(curve.keys())
     ys = [curve[n] for n in ns]
@@ -582,6 +694,10 @@ def main(args):
         if metric == "wise":
             # WISE has its own per-category + weighted-Overall path.
             out.update(_aggregate_wise(rows, bestofn_dir, plots_dir, csv_dir))
+            continue
+        if metric == "dpg-score":
+            # DPG-Bench has its own Average + Best-of-N (ceiling) path.
+            out.update(_aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir))
             continue
         mat = build_score_matrix(rows, metric)
         if mat is None:
