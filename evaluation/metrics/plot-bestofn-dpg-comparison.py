@@ -1,9 +1,10 @@
 """Plot the DPG-Bench Best-of-N curve comparing five SD-3.5-M methods.
 
-Follows plot-bestofn-comparison.py, but: (a) targets the SD-3.5-M family
-and its 5 methods, (b) plots only the dpg_bench dpg-score curve, and
-(c) uses a distinct marker per method (not all circles) so overlaid
-curves stay tellable apart in print/grayscale.
+Style is kept identical to plot-bestofn-wise-comparison.py (same rcParams,
+linear x-axis with ticks 4..32, grid, legend, figure size, save args) so
+the DPG and WISE BoN figures look like a matched set. The ONE intentional
+difference: each method gets a distinct marker (not all circles) so the
+five overlaid curves stay tellable apart in print/grayscale.
 
 Reads, for each method:
   ${base_root}/<method>/dpg_bench/bestofn/csv/dpg-score_curve.csv
@@ -44,8 +45,8 @@ METHOD_LABELS = {
     "diffusion-dpo-sd3":      "Diffusion-DPO",
     "realalign-sd3":          "RealAlign",
 }
-# Muted neutral gray for the baseline + ColorBrewer Set2 hues for the
-# four post-training variants.
+# Muted neutral gray for the baseline + ColorBrewer Set2 hues for the four
+# post-trained methods. Same palette family as plot-bestofn-wise-comparison.py.
 METHOD_COLORS = {
     "base-sd3":               "#a8a8a8",
     "flowgrpo-pickscore-sd3": "#8da0cb",
@@ -53,8 +54,9 @@ METHOD_COLORS = {
     "diffusion-dpo-sd3":      "#fc8d62",
     "realalign-sd3":          "#e78ac3",
 }
-# Distinct marker per method so the five overlaid curves stay
-# distinguishable without relying on color alone.
+# The single intentional departure from the WISE plot's style: a distinct
+# marker per method so the five overlaid curves stay distinguishable
+# without relying on color alone.
 METHOD_MARKERS = {
     "base-sd3":               "o",
     "flowgrpo-pickscore-sd3": "s",
@@ -76,8 +78,8 @@ OUTPUT_STEM = "dpg-score"
 Y_SCALE = 100.0  # csv stores 0..1; DPG-Bench is reported on 0..100.
 
 
-def load_curve(base_root, method):
-    path = os.path.join(base_root, method, DATASET, "bestofn", "csv", CSV_NAME)
+def load_curve(base_root, method, csv_name):
+    path = os.path.join(base_root, method, DATASET, "bestofn", "csv", csv_name)
     ns, ys = [], []
     with open(path) as f:
         reader = csv.reader(f)
@@ -88,6 +90,45 @@ def load_curve(base_root, method):
     return np.array(ns), np.array(ys)
 
 
+def plot_one(label, csv_name, stem, base_root, out_dir):
+    fig, ax = plt.subplots(figsize=(5.6, 4.0), constrained_layout=True)
+
+    for method in METHODS:
+        try:
+            ns, ys = load_curve(base_root, method, csv_name)
+        except FileNotFoundError as e:
+            print(f"[warn] missing {e.filename}", file=sys.stderr)
+            continue
+        ax.plot(
+            ns, ys * Y_SCALE,
+            marker=METHOD_MARKERS[method],
+            color=METHOD_COLORS[method],
+            linestyle=METHOD_LINESTYLES[method],
+            label=METHOD_LABELS[method],
+        )
+
+    ax.set_xlabel("N (samples per prompt)")
+    ax.set_ylabel(f"DPG-Score (0–100) — {label}")
+    ax.set_title(f"DPG-Bench Best-of-N: {label}")
+    ax.set_xticks(np.arange(4, 33, 4))
+    ax.set_xlim(0, 33)
+    ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.6)
+    ax.legend(
+        loc='lower right',
+        frameon=True,
+        framealpha=0.9,
+        edgecolor='#dddddd',
+        fontsize=10,
+    )
+
+    png_path = os.path.join(out_dir, f"{stem}.png")
+    pdf_path = os.path.join(out_dir, f"{stem}.pdf")
+    fig.savefig(png_path, dpi=200, bbox_inches='tight')
+    fig.savefig(pdf_path, bbox_inches='tight')
+    plt.close(fig)
+    print(f"saved {png_path} and {pdf_path}")
+
+
 def main(args):
     plt.rcParams.update({
         "axes.spines.top": False,
@@ -95,57 +136,16 @@ def main(args):
         "axes.titlesize": 13,
         "axes.titleweight": "bold",
         "axes.labelsize": 11,
-        "legend.fontsize": 11,
+        "legend.fontsize": 10,
         "xtick.labelsize": 10,
         "ytick.labelsize": 10,
         "lines.linewidth": 2.2,
-        "lines.markersize": 5.5,
+        "lines.markersize": 4.5,
         "font.family": "DejaVu Sans",
     })
+
     os.makedirs(args.out_dir, exist_ok=True)
-
-    fig, ax = plt.subplots(figsize=(5.6, 4.0), constrained_layout=True)
-    max_n = 0
-    for method in METHODS:
-        try:
-            ns, ys = load_curve(args.base_root, method)
-        except FileNotFoundError as e:
-            print(f"[warn] missing {e.filename}", file=sys.stderr)
-            continue
-        max_n = max(max_n, int(ns.max()))
-        ax.plot(
-            ns, ys * Y_SCALE,
-            marker=METHOD_MARKERS[method],
-            color=METHOD_COLORS[method],
-            linestyle=METHOD_LINESTYLES[method],
-            label=METHOD_LABELS[method],
-            markevery=max(1, len(ns) // 12),
-        )
-
-    if max_n == 0:
-        sys.exit(f"No dpg-score curves found under {args.base_root}/<method>/"
-                 f"{DATASET}/bestofn/csv/{CSV_NAME}")
-
-    ax.set_xlabel("N (samples per prompt)")
-    ax.set_ylabel("DPG-Score (0–100)")
-    ax.set_title("Best-of-N: DPG-Bench")
-    ax.set_xscale("log", base=2)
-    ax.set_xlim(1, max_n)
-    ax.grid(True, which="both", alpha=0.3, linestyle="--", linewidth=0.6)
-    ax.legend(
-        loc="lower right",
-        frameon=True,
-        framealpha=0.9,
-        edgecolor="#dddddd",
-        fontsize=10,
-    )
-
-    png_path = os.path.join(args.out_dir, f"{OUTPUT_STEM}.png")
-    pdf_path = os.path.join(args.out_dir, f"{OUTPUT_STEM}.pdf")
-    fig.savefig(png_path, dpi=200, bbox_inches="tight")
-    fig.savefig(pdf_path, bbox_inches="tight")
-    plt.close(fig)
-    print(f"saved {png_path} and {pdf_path}")
+    plot_one("Overall", CSV_NAME, OUTPUT_STEM, args.base_root, args.out_dir)
 
 
 if __name__ == "__main__":
