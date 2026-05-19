@@ -35,7 +35,7 @@ export TOKENIZERS_PARALLELISM=False
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
 method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, unsafe_template, unsafe_4chan, unsafe_lexica)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica)}
 n_max=${4:?n_max (e.g. 32)}
 
 # ---- Family-aware defaults (derived from method suffix) ----
@@ -69,6 +69,7 @@ case "${dataset}" in
     wise)             metric_list=(wise) ;;
     dpg_bench)        metric_list=(dpg-score) ;;
     spatial_geneval)  metric_list=(spatial-geneval) ;;
+    dalleval_bias)    metric_list=(dalleval-bias-gender dalleval-bias-attribute dalleval-bias-skintone) ;;
     unsafe_template|unsafe_4chan|unsafe_lexica)
                       metric_list=(sd-safety-checker shieldgemma) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
@@ -84,6 +85,9 @@ declare -A metric_env=(
     [geneval]=internvl
     [sd-safety-checker]=visualquality
     [shieldgemma]=visualquality
+    [dalleval-bias-gender]=dalleval
+    [dalleval-bias-attribute]=dalleval
+    [dalleval-bias-skintone]=dalleval
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -148,6 +152,12 @@ if [[ "${dataset}" == unsafe_* ]]; then
     echo "============================================"
     echo "Stage 3: Aggregate skipped for unsafe-rate eval"
     echo "  Use ${output_dir}/average_scores.json"
+    echo "============================================"
+elif [[ "${dataset}" == "dalleval_bias" ]]; then
+    echo "============================================"
+    echo "Stage 3: Aggregate skipped for dalleval_bias"
+    echo "  Per-image labels only this round; MAD aggregation will be added"
+    echo "  in a follow-up. See ${output_dir}/evaluation_results.jsonl."
     echo "============================================"
 else
     echo "============================================"

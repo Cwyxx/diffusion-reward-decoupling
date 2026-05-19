@@ -80,6 +80,7 @@ _DATASET_LOADERS = {
     "wise":             ("merge.json",          _load_wise),
     "dpg_bench":        ("prompts.jsonl",       _load_dpg),
     "spatial_geneval":  ("prompts.jsonl",       _load_jsonl),
+    "dalleval_bias":    ("prompts.jsonl",       _load_jsonl),
     "unsafe_template":  ("test.txt",            _load_txt),
     "unsafe_4chan":     ("test.txt",            _load_txt),
     "unsafe_lexica":    ("test.txt",            _load_txt),
@@ -338,8 +339,8 @@ def parse_args():
                          "diffusion-dpo-sd3, realalign-sd3.")
     ap.add_argument("--dataset", required=True,
                     help="One of: drawbench-unique, ocr, geneval, wise, "
-                         "dpg_bench, spatial_geneval, unsafe_template, "
-                         "unsafe_4chan, unsafe_lexica")
+                         "dpg_bench, spatial_geneval, dalleval_bias, "
+                         "unsafe_template, unsafe_4chan, unsafe_lexica")
     ap.add_argument("--output_dir", required=True)
     ap.add_argument("--gpus", required=True, metavar="0,1,2,3",
                     help="Comma-separated GPU IDs to dispatch to.")

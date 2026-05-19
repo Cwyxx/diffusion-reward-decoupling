@@ -27,10 +27,22 @@ AVAILABLE_METRICS = [
     "pickscore", "imagereward", "aesthetic", "hpsv3", "deqa", "visualquality_r1",
     "ocr", "geneval", "wise", "dpg-score", "spatial-geneval",
     "sd-safety-checker", "shieldgemma",
+    "dalleval-bias-gender", "dalleval-bias-attribute", "dalleval-bias-skintone",
 ]
 
 # Metrics whose scoring functions require small batches.
 SMALL_BATCH_METRICS = {"hpsv3", "visualquality_r1"}
+
+
+def _dalleval_attr_keys():
+    # Importing the scorer just to read ATTR_SLUGS would pull lavis in; keep
+    # this list inline and aligned with blip2_scorer.ATTRIBUTES (asserted there).
+    return tuple(f"dalleval-attr-{slug}" for slug in (
+        "boots", "slippers", "jeans", "shorts", "slacks",
+        "dress", "skirt", "suit", "shirt", "uniform",
+        "jacket", "hat", "tie", "mask", "gloves",
+    ))
+
 
 # Some metric names dispatch to scorers that write benchmark-specific score keys.
 METRIC_OUTPUT_KEYS = {
@@ -41,6 +53,9 @@ METRIC_OUTPUT_KEYS = {
         "shieldgemma-violence-gore",
         "shieldgemma-unsafe",
     ),
+    "dalleval-bias-gender":    ("dalleval-gender-label",),
+    "dalleval-bias-attribute": _dalleval_attr_keys(),
+    "dalleval-bias-skintone":  ("dalleval-skintone-monk",),
 }
 
 
@@ -692,6 +707,58 @@ def _score_shieldgemma_in_place(todo_rows):
     torch.cuda.empty_cache()
 
 
+# ------------------------- DallEval social-bias judges -------------------------
+# Three per-image classifiers (gender / attribute / skintone). Per-prompt MAD
+# aggregation is intentionally *not* done here — these scorers just write
+# discrete labels into each row and stop. Aggregation lives outside the BoN
+# scoring loop.
+
+def _score_dalleval_gender_in_place(todo_rows):
+    from evaluation.benchmarks.DallEval.biases.blip2_scorer import score_gender
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+    batch_size = int(os.environ.get("DALLEVAL_BLIP2_BATCH_SIZE", "4"))
+    print(f"[dalleval-bias-gender] {n} images; batch_size={batch_size}")
+    for start in tqdm(range(0, n, batch_size), desc="dalleval-bias-gender"):
+        batch_rows = todo_rows[start : start + batch_size]
+        images = [_open_rgb_image(r["image_path"]) for r in batch_rows]
+        scores = score_gender(images, device="cuda")
+        for r, s in zip(batch_rows, scores):
+            r["scores"].update(s)
+    torch.cuda.empty_cache()
+
+
+def _score_dalleval_attribute_in_place(todo_rows):
+    from evaluation.benchmarks.DallEval.biases.blip2_scorer import score_attribute
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+    batch_size = int(os.environ.get("DALLEVAL_BLIP2_BATCH_SIZE", "4"))
+    print(f"[dalleval-bias-attribute] {n} images; batch_size={batch_size}")
+    for start in tqdm(range(0, n, batch_size), desc="dalleval-bias-attribute"):
+        batch_rows = todo_rows[start : start + batch_size]
+        images = [_open_rgb_image(r["image_path"]) for r in batch_rows]
+        scores = score_attribute(images, device="cuda")
+        for r, s in zip(batch_rows, scores):
+            r["scores"].update(s)
+    torch.cuda.empty_cache()
+
+
+def _score_dalleval_skintone_in_place(todo_rows, output_dir):
+    # Skintone is a multi-stage subprocess pipeline (face_alignment -> TRUST ->
+    # ITA->Monk); the scorer module handles staging, subprocesses, and reverse
+    # mapping. It needs output_dir for its scratch space.
+    from evaluation.benchmarks.DallEval.biases.skintone_scorer import (
+        score_skintone_in_place,
+    )
+
+    score_skintone_in_place(todo_rows, output_dir)
+    torch.cuda.empty_cache()
+
+
 def main(args):
     results_path = os.path.join(args.output_dir, "evaluation_results.jsonl")
     with open(results_path, "r") as f:
@@ -726,6 +793,18 @@ def main(args):
 
         if metric == "shieldgemma":
             _score_shieldgemma_in_place(todo)
+            continue
+
+        if metric == "dalleval-bias-gender":
+            _score_dalleval_gender_in_place(todo)
+            continue
+
+        if metric == "dalleval-bias-attribute":
+            _score_dalleval_attribute_in_place(todo)
+            continue
+
+        if metric == "dalleval-bias-skintone":
+            _score_dalleval_skintone_in_place(todo, args.output_dir)
             continue
 
         image_paths = [r["image_path"] for r in todo]

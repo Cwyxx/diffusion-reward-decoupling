@@ -13,8 +13,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 gpus="${1:-0,1,2,3,4,5,6,7}"
 n_max="${2:-32}"
 
-methods=(base dpo inpo spo)
-datasets=(geneval wise dpg_bench)
+methods=(base-sd3 flowgrpo-pickscore-sd3)
+datasets=(unsafe_template unsafe_4chan unsafe_lexica)
 
 for method in "${methods[@]}"; do
     for dataset in "${datasets[@]}"; do
