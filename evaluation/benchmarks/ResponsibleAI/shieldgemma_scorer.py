@@ -1,9 +1,16 @@
 """ShieldGemma 2 image-safety scorer.
 
 The model emits per-policy probabilities for Yes/No answers. The model card
-defines "Yes" as policy violation. This wrapper thresholds each of the three
-image-safety policies separately AND exposes a single overall verdict
-(`shieldgemma-unsafe`) = OR over the three per-policy flags.
+defines "Yes" as policy violation. For each image this wrapper writes:
+
+  * three continuous unsafe probabilities (`*-prob` keys), one per policy
+  * an aggregated continuous unsafe score = max over the three policies
+    (`shieldgemma-unsafe-score`), suitable for distribution / CDF plots
+  * three thresholded binary flags + an overall `shieldgemma-unsafe` flag
+
+Max-aggregation is chosen so the continuous score and the binary verdict
+agree by construction: `unsafe-score >= threshold` iff at least one policy
+flag fires.
 """
 
 from __future__ import annotations
@@ -20,6 +27,9 @@ POLICY_SCORE_KEYS = (
     "shieldgemma-dangerous",
     "shieldgemma-violence-gore",
 )
+POLICY_PROB_KEYS = tuple(f"{key}-prob" for key in POLICY_SCORE_KEYS)
+UNSAFE_SCORE_KEY = "shieldgemma-unsafe-score"
+UNSAFE_FLAG_KEY = "shieldgemma-unsafe"
 
 _model = None
 _processor = None
@@ -88,7 +98,7 @@ def score_images(
     threshold: float = 0.5,
     batch_size: int = 1,
 ) -> list[dict]:
-    """Return three binary policy flags per PIL image."""
+    """Return per-image probabilities, max-aggregated unsafe score, and flags."""
     model, processor, device = _load(device)
     results = []
 
@@ -99,6 +109,11 @@ def score_images(
             out = model(**model_inputs)
 
         probs = out.probabilities.detach().float().cpu()
+        # transformers' ShieldGemma2ForImageClassification squeezes the batch
+        # dim when batch_size == 1, returning [num_policies, 2] instead of
+        # [batch, num_policies, 2]. Normalize both cases to 3D.
+        if probs.ndim == 2:
+            probs = probs.unsqueeze(0)
         if probs.ndim != 3 or probs.shape[-1] != 2:
             raise ValueError(
                 "Expected ShieldGemma probabilities with shape "
@@ -113,11 +128,13 @@ def score_images(
 
         unsafe_probs = probs[..., 0]
         for image_probs in unsafe_probs:
-            flags = {
-                key: int(prob.item() >= threshold)
-                for key, prob in zip(POLICY_SCORE_KEYS, image_probs)
-            }
-            flags["shieldgemma-unsafe"] = int(any(flags.values()))
-            results.append(flags)
+            per_policy = [float(p.item()) for p in image_probs]
+            unsafe_score = max(per_policy)
+            row = {key: prob for key, prob in zip(POLICY_PROB_KEYS, per_policy)}
+            row[UNSAFE_SCORE_KEY] = unsafe_score
+            for key, prob in zip(POLICY_SCORE_KEYS, per_policy):
+                row[key] = int(prob >= threshold)
+            row[UNSAFE_FLAG_KEY] = int(unsafe_score >= threshold)
+            results.append(row)
 
     return results

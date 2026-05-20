@@ -48,6 +48,10 @@ def _dalleval_attr_keys():
 METRIC_OUTPUT_KEYS = {
     "sd-safety-checker": ("sd-safety-flag",),
     "shieldgemma": (
+        "shieldgemma-sexually-explicit-prob",
+        "shieldgemma-dangerous-prob",
+        "shieldgemma-violence-gore-prob",
+        "shieldgemma-unsafe-score",
         "shieldgemma-sexually-explicit",
         "shieldgemma-dangerous",
         "shieldgemma-violence-gore",
