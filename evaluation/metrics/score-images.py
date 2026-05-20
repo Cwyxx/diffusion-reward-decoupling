@@ -25,7 +25,7 @@ from flow_grpo.rewards import multi_score
 
 AVAILABLE_METRICS = [
     "pickscore", "imagereward", "aesthetic", "hpsv3", "deqa", "visualquality_r1",
-    "ocr", "geneval", "wise", "dpg-score", "spatial-geneval",
+    "ocr", "geneval", "wise", "dpg-score", "dpg-score-mplug-owl2", "spatial-geneval",
     "sd-safety-checker", "shieldgemma",
     "dalleval-bias-gender", "dalleval-bias-attribute", "dalleval-bias-skintone",
 ]
@@ -91,6 +91,11 @@ def run_metric(metric, image_paths, prompts, metadatas, batch_size, device):
 
     if metric == "dpg-score":
         raise RuntimeError("metric=dpg-score must be routed via _score_dpg_in_place")
+
+    if metric == "dpg-score-mplug-owl2":
+        raise RuntimeError(
+            "metric=dpg-score-mplug-owl2 must be routed via _score_dpg_mplug_owl2_in_place"
+        )
 
     if metric == "spatial-geneval":
         raise RuntimeError("metric=spatial-geneval must be routed via _score_spatial_geneval_in_place")
@@ -481,6 +486,166 @@ def _score_dpg_in_place(todo_rows):
             todo_rows[i]["scores"]["dpg-score"] = score
 
 
+# ------------------------- DPG-Bench mPLUG-Owl2 judge -------------------------
+# Alternative DPG-Score backend: in-process mPLUG-Owl2 (X-PLUG/mPLUG-Owl2),
+# loaded from ModelScope per the official repo's loading recipe. Shares the
+# DPG CSV + dependency-pruning logic with _score_dpg_in_place but runs the
+# VLM locally on this GPU instead of over HTTP. Sequential per image — Owl2
+# fully occupies the GPU, so a thread pool would just serialize on the model.
+
+_MPLUG_OWL2_RUNTIME = None  # (tokenizer, model, image_processor); lazy.
+
+
+def _build_mplug_owl2():
+    """Load mPLUG-Owl2 once per process from ModelScope, then cache."""
+    global _MPLUG_OWL2_RUNTIME
+    if _MPLUG_OWL2_RUNTIME is not None:
+        return _MPLUG_OWL2_RUNTIME
+
+    from modelscope import snapshot_download
+    from mplug_owl2.model.builder import load_pretrained_model
+    from mplug_owl2.mm_utils import get_model_name_from_path
+
+    model_id = os.environ.get("DPG_MPLUG_OWL2_MODEL", "iic/mPLUG-Owl2")
+    print(f"[dpg-score-mplug-owl2] snapshot_download({model_id!r}) ...")
+    model_dir = snapshot_download(model_id)
+    model_name = get_model_name_from_path(model_dir)
+    tokenizer, model, image_processor, _ = load_pretrained_model(
+        model_dir, None, model_name,
+        load_8bit=False, load_4bit=False, device="cuda",
+    )
+    model.eval()
+    _MPLUG_OWL2_RUNTIME = (tokenizer, model, image_processor)
+    return _MPLUG_OWL2_RUNTIME
+
+
+def _mplug_owl2_vqa(image, question, *, tokenizer, model, image_processor,
+                    do_sample=False, temperature=0.0, max_new_tokens=8):
+    """Run one yes/no VQA turn against mPLUG-Owl2.
+
+    Mirrors the inference snippet in the X-PLUG/mPLUG-Owl2 official README:
+    pad to square, run process_images, build a single-turn chat with the
+    'mplug_owl2' conversation template, and decode the assistant reply.
+    """
+    import torch
+    from mplug_owl2.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN
+    from mplug_owl2.conversation import conv_templates
+    from mplug_owl2.mm_utils import (
+        KeywordsStoppingCriteria, process_images, tokenizer_image_token,
+    )
+
+    max_edge = max(image.size)
+    image_padded = image.resize((max_edge, max_edge))
+    image_tensor = process_images([image_padded], image_processor)
+    image_tensor = image_tensor.to(model.device, dtype=torch.float16)
+
+    conv = conv_templates["mplug_owl2"].copy()
+    # The DPG CSV's questions are bare ("Is there a man?"); Owl2 is a chat
+    # model and will happily monologue, so we pin it to a single word.
+    user_text = DEFAULT_IMAGE_TOKEN + question + " Please answer yes or no."
+    conv.append_message(conv.roles[0], user_text)
+    conv.append_message(conv.roles[1], None)
+    prompt = conv.get_prompt()
+
+    input_ids = tokenizer_image_token(
+        prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors="pt",
+    ).unsqueeze(0).to(model.device)
+    stop_str = conv.sep2
+    stopping_criteria = KeywordsStoppingCriteria([stop_str], tokenizer, input_ids)
+
+    gen_kwargs = dict(
+        images=image_tensor,
+        max_new_tokens=max_new_tokens,
+        use_cache=True,
+        stopping_criteria=[stopping_criteria],
+    )
+    if do_sample:
+        gen_kwargs.update(do_sample=True, temperature=temperature, top_p=0.9)
+    else:
+        gen_kwargs.update(do_sample=False)
+
+    with torch.inference_mode():
+        output_ids = model.generate(input_ids, **gen_kwargs)
+
+    output = tokenizer.decode(
+        output_ids[0, input_ids.shape[1]:], skip_special_tokens=True,
+    ).strip()
+    if stop_str and output.endswith(stop_str):
+        output = output[:-len(stop_str)].strip()
+    return output
+
+
+def _score_dpg_mplug_owl2_in_place(todo_rows):
+    """Fill todo_rows[i]['scores']['dpg-score-mplug-owl2'] in place.
+
+    Loads the official mPLUG-Owl2 (X-PLUG/mPLUG-Owl) from ModelScope and asks
+    each DPG yes/no question per image. Same CSV + dependency-pruning logic
+    as _score_dpg_in_place; first attempt is deterministic, parse-failure
+    retries flip on sampling so the model can actually emit a different reply.
+    """
+    n = len(todo_rows)
+    if n == 0:
+        return
+
+    questions_by_iid = _load_dpg_csv()
+    max_retries       = int(os.environ.get("DPG_MPLUG_OWL2_MAX_RETRIES", "3"))
+    retry_temperature = float(os.environ.get("DPG_MPLUG_OWL2_RETRY_TEMPERATURE", "0.5"))
+
+    tokenizer, model, image_processor = _build_mplug_owl2()
+    print(f"[dpg-score-mplug-owl2] {n} images to score; "
+          f"loaded {len(questions_by_iid)} prompt entries from CSV; "
+          f"max_retries={max_retries} retry_temp={retry_temperature}")
+
+    for r in tqdm(todo_rows, desc="dpg-score-mplug-owl2"):
+        meta = r.get("metadata") or {}
+        if "item_id" not in meta:
+            raise KeyError(
+                f"DPG (Owl2) judge needs metadata.item_id; row for "
+                f"{r['image_path']} has metadata keys {sorted(meta.keys())}"
+            )
+        item_id = meta["item_id"]
+        if item_id not in questions_by_iid:
+            raise KeyError(
+                f"DPG (Owl2) judge: item_id {item_id!r} not found in CSV "
+                f"(image={r['image_path']})"
+            )
+        qd = questions_by_iid[item_id]
+        image = Image.open(r["image_path"]).convert("RGB")
+
+        qid2score = {}
+        for qid, question in qd["qid2question"].items():
+            last_raw = None
+            for attempt in range(1, max_retries + 1):
+                do_sample = attempt > 1
+                temp = retry_temperature if do_sample else 0.0
+                last_raw = _mplug_owl2_vqa(
+                    image, question,
+                    tokenizer=tokenizer, model=model, image_processor=image_processor,
+                    do_sample=do_sample, temperature=temp,
+                )
+                yn = _dpg_extract_yesno(last_raw)
+                if yn is not None:
+                    qid2score[qid] = yn
+                    break
+            else:
+                raise RuntimeError(
+                    f"DPG (Owl2) judge: yes/no parse failed {max_retries}x "
+                    f"on {r['image_path']} qid={qid}; last_raw={last_raw!r}"
+                )
+
+        for qid, parents in qd["qid2dependency"].items():
+            for p in parents:
+                if p == 0:
+                    continue
+                if qid2score.get(p, 1.0) == 0.0:
+                    qid2score[qid] = 0.0
+                    break
+
+        r["scores"]["dpg-score-mplug-owl2"] = (
+            sum(qid2score.values()) / len(qid2score)
+        )
+
+
 # ------------------------- SpatialGenEval judge -------------------------
 # Mirrors evaluation/benchmarks/SpatialGenEval/scripts/spatialgeneval_stage1_eval.py
 # but: (a) called per-image inside the BoN scoring loop, (b) replaces the
@@ -781,6 +946,10 @@ def main(args):
 
         if metric == "dpg-score":
             _score_dpg_in_place(todo)
+            continue
+
+        if metric == "dpg-score-mplug-owl2":
+            _score_dpg_mplug_owl2_in_place(todo)
             continue
 
         if metric == "spatial-geneval":
