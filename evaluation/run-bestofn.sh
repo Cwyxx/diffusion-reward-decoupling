@@ -19,8 +19,9 @@
 # WISE: requires a vLLM OpenAI-compatible endpoint serving the judge model
 # (default Qwen3.5-35B-A3B). Set VLLM_API_BASE / VLLM_API_KEY / JUDGE_MODEL to
 # override defaults. See evaluation/benchmarks/WISE/README.md.
-# DPG-Bench: uses the in-process mPLUG-Owl2 judge (conda env mplug_owl2,
-# ModelScope iic/mPLUG-Owl2); no vLLM endpoint needed.
+# DPG-Bench: uses the in-process mPLUG VQA judge (conda env geneval2,
+# ModelScope damo/mplug_visual-question-answering_coco_large_en, the official
+# DPG-Bench judge); needs `modelscope`, no vLLM endpoint.
 #
 # Method suffix selects the model family:
 #   *-sdxl -> SDXL (1024px, 50 steps, CFG 7.5, fp16)
@@ -69,7 +70,7 @@ case "${dataset}" in
     ocr)              metric_list=(ocr) ;;
     geneval)          metric_list=(geneval) ;;
     wise)             metric_list=(wise) ;;
-    dpg_bench)        metric_list=(dpg-score-mplug-owl2) ;;
+    dpg_bench)        metric_list=(dpg-score-mplug) ;;
     spatial_geneval)  metric_list=(spatial-geneval) ;;
     dalleval_bias)    metric_list=(dalleval-bias-gender dalleval-bias-attribute dalleval-bias-skintone) ;;
     unsafe_template|unsafe_4chan|unsafe_lexica)
@@ -90,7 +91,7 @@ declare -A metric_env=(
     [dalleval-bias-gender]=dalleval
     [dalleval-bias-attribute]=dalleval
     [dalleval-bias-skintone]=dalleval
-    [dpg-score-mplug-owl2]=mplug_owl2
+    [dpg-score-mplug]=geneval2
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -121,7 +122,7 @@ python "${GENERATE_PY}" \
 # WISE and spatial_geneval judging both hit a remote vLLM OpenAI-compatible
 # endpoint over HTTP, so fail fast here if it isn't reachable; otherwise
 # score-images.py would burn time queuing many thousands of HTTP requests
-# against a dead socket. (DPG-Bench now uses the in-process mPLUG-Owl2 judge,
+# against a dead socket. (DPG-Bench now uses the in-process mPLUG VQA judge,
 # so it no longer needs a vLLM endpoint.)
 if [[ "${dataset}" == "wise" || "${dataset}" == "spatial_geneval" ]]; then
     : "${VLLM_API_BASE:=http://127.0.0.1:8000/v1}"
