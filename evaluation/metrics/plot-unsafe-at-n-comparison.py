@@ -1,26 +1,32 @@
-"""Plot unsafe@N curves for Responsible-AI safety eval.
+"""Plot unsafe-rate-vs-N curves for Responsible-AI safety eval.
 
-Reads ${base_root}/<method>/<dataset>/bestofn/csv/<metric>_curve.csv and
-writes a separate figure per (classifier, dataset) pair, overlaying all
-methods so you can see whether a given training method changes the
-attack-success rate on a given adversarial prompt source.
+Writes a separate figure per (classifier, dataset) pair, overlaying all
+methods so you can see whether a given training method changes the safety
+behaviour on a given adversarial prompt source.
 
-The CSVs are produced by evaluation/metrics/aggregate-bestofn.py once
-sd-safety-flag and shieldgemma-unsafe are registered as BINARY_METRICS:
-pass@N with threshold=1.0 over a 0/1 unsafe flag is exactly unsafe@N --
-the fraction of prompts for which at least one of the first N seeds is
-flagged unsafe.
+Two modes (--mode, default average), both produced by
+evaluation/metrics/aggregate-bestofn.py from a 0/1 unsafe flag:
 
-Output files (in --out_dir):
-  sd-safety-flag_template.{png,pdf}
-  sd-safety-flag_4chan.{png,pdf}
-  sd-safety-flag_lexica.{png,pdf}
-  shieldgemma-unsafe_template.{png,pdf}
-  shieldgemma-unsafe_4chan.{png,pdf}
-  shieldgemma-unsafe_lexica.{png,pdf}
+  average (default): unsafe@average-N -- mean over prompts of the fraction
+    of the first N seeds flagged unsafe. The expected probability that any
+    single generated image is unsafe. Budget-independent (flat in N in
+    expectation), so it compares per-image unsafe rates across methods
+    fairly. Reads <metric>_average_curve.csv. The reportable headline is the
+    value at the largest N (e.g. N=32).
+
+  union: unsafe@N -- pass@N with threshold=1.0, the fraction of prompts for
+    which AT LEAST ONE of the first N seeds is unsafe. Monotonically rising;
+    a worst-case / attack-success view. Reads <metric>_curve.csv.
+
+Reads ${base_root}/<method>/<dataset>/bestofn/csv/<stem>_curve.csv.
+
+Output files (in --out_dir), with an "_average" suffix in average mode:
+  sd-safety-flag_template[_average].{png,pdf}        (+ _4chan, _lexica)
+  shieldgemma-unsafe_template[_average].{png,pdf}    (+ _4chan, _lexica)
 
 Usage:
   python evaluation/metrics/plot-unsafe-at-n-comparison.py --out_dir ./unsafe_plots
+  python evaluation/metrics/plot-unsafe-at-n-comparison.py --mode union --out_dir ./unsafe_plots
 """
 import argparse
 import csv
@@ -92,9 +98,12 @@ CLASSIFIERS = [
 ]
 
 
-def load_curve(base_root, method, dataset, metric):
+def load_curve(base_root, method, dataset, metric, mode):
+    # union  -> unsafe@N           (pass@N):    {metric}_curve.csv
+    # average-> unsafe@average-N (mean rate): {metric}_average_curve.csv
+    stem = f"{metric}_average" if mode == "average" else metric
     path = os.path.join(
-        base_root, method, dataset, "bestofn", "csv", f"{metric}_curve.csv"
+        base_root, method, dataset, "bestofn", "csv", f"{stem}_curve.csv"
     )
     ns, ys = [], []
     with open(path) as f:
@@ -106,11 +115,11 @@ def load_curve(base_root, method, dataset, metric):
     return np.array(ns), np.array(ys)
 
 
-def plot_one(metric, metric_label, dataset, dataset_stem, base_root, out_dir):
+def plot_one(metric, metric_label, dataset, dataset_stem, base_root, out_dir, mode):
     loaded = []
     for method in METHODS:
         try:
-            ns, ys = load_curve(base_root, method, dataset, metric)
+            ns, ys = load_curve(base_root, method, dataset, metric, mode)
         except FileNotFoundError as e:
             print(f"[warn] missing {e.filename}", file=sys.stderr)
             continue
@@ -142,8 +151,10 @@ def plot_one(metric, metric_label, dataset, dataset_stem, base_root, out_dir):
     ax.set_xlim(0, n_max + 1)
     ax.set_ylim(bottom=0)
     ax.set_xlabel("N (samples per prompt)")
-    ax.set_ylabel(f"unsafe@N ({metric_label})")
-    ax.set_title(f"Unsafe@N — {metric_label} on {dataset}")
+    if mode == "average":
+        ax.set_ylabel(f"unsafe@average-N ({metric_label})")
+    else:
+        ax.set_ylabel(f"unsafe@N ({metric_label})")
     ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.6)
     ax.legend(
         loc='lower right',
@@ -153,7 +164,8 @@ def plot_one(metric, metric_label, dataset, dataset_stem, base_root, out_dir):
         fontsize=10,
     )
 
-    stem = f"{metric}_{dataset_stem}"
+    suffix = "_average" if mode == "average" else ""
+    stem = f"{metric}_{dataset_stem}{suffix}"
     png_path = os.path.join(out_dir, f"{stem}.png")
     pdf_path = os.path.join(out_dir, f"{stem}.pdf")
     fig.savefig(png_path, dpi=200, bbox_inches='tight')
@@ -181,7 +193,7 @@ def main(args):
     for metric, metric_label in CLASSIFIERS:
         for dataset, dataset_stem in DATASETS:
             plot_one(metric, metric_label, dataset, dataset_stem,
-                     args.base_root, args.out_dir)
+                     args.base_root, args.out_dir, args.mode)
 
 
 if __name__ == "__main__":
@@ -195,5 +207,11 @@ if __name__ == "__main__":
     ap.add_argument(
         "--out_dir", default="bestofn_unsafe_plots",
         help="Directory to write per-(classifier,dataset) PNG + PDF files into.",
+    )
+    ap.add_argument(
+        "--mode", choices=["average", "union"], default="average",
+        help="average: unsafe@average-N (mean per-image rate, budget-independent, "
+             "reads {metric}_average_curve.csv). union: unsafe@N pass@N (reads "
+             "{metric}_curve.csv). default: average.",
     )
     main(ap.parse_args())

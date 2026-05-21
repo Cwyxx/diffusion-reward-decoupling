@@ -67,6 +67,15 @@ BINARY_METRICS = {"ocr", "geneval", "sd-safety-flag", "shieldgemma-unsafe"}
 # capturing sub-threshold improvements that binary aggregation discards.
 DUAL_METRICS = {"ocr"}
 
+# Binary metrics that ALSO get an "average rate" view: mean over prompts of
+# the fraction of the first n samples that are flagged. For the safety flags
+# this is unsafe@average-N -- the expected probability that any single
+# generated image is unsafe -- as opposed to unsafe@N (pass@N), which is the
+# probability that AT LEAST ONE of n samples is unsafe. The average view is
+# budget-independent (flat in n in expectation), so it compares the per-image
+# unsafe rate across methods fairly without sampling-budget amplification.
+AVERAGE_METRICS = {"sd-safety-flag", "shieldgemma-unsafe"}
+
 # DPG-Bench's reportable "Average DPG-Score" averages a fixed number of
 # images per prompt. The ELLA official protocol uses 4 (a 2x2 grid); we
 # mirror that by averaging the first 4 seeds (seed_index 0..3). Best-of-N
@@ -125,9 +134,20 @@ def pass_at_n(scores: np.ndarray, n: int, threshold: float = 1.0) -> float:
     return float(np.mean(np.any(scores[:, :n] >= threshold, axis=1)))
 
 
+def mean_at_n(scores: np.ndarray, n: int, threshold: float = 1.0) -> float:
+    """Average rate: mean over prompts of the fraction of first n samples >= threshold.
+
+    For 0/1 flags this is the expected per-image flag rate (e.g. unsafe@average-N).
+    Flat in n in expectation; larger n only shrinks the estimate's variance.
+    """
+    if not 1 <= n <= scores.shape[1]:
+        raise ValueError(f"n={n} out of range [1, {scores.shape[1]}]")
+    return float(np.mean((scores[:, :n] >= threshold).astype(float)))
+
+
 def aggregate_curve(
     scores: np.ndarray,
-    kind: Literal["continuous", "binary"],
+    kind: Literal["continuous", "binary", "average"],
     threshold: float = 1.0,
 ) -> Dict[int, float]:
     """Compute the BoN value for every n in [1, n_max]."""
@@ -136,6 +156,8 @@ def aggregate_curve(
         return {n: bon_continuous(scores, n) for n in range(1, n_max + 1)}
     elif kind == "binary":
         return {n: pass_at_n(scores, n, threshold) for n in range(1, n_max + 1)}
+    elif kind == "average":
+        return {n: mean_at_n(scores, n, threshold) for n in range(1, n_max + 1)}
     else:
         raise ValueError(f"unknown kind={kind!r}")
 
@@ -662,6 +684,9 @@ def plot_curve(curve, metric, kind, threshold, out_path):
     if kind == "binary":
         ax.set_ylabel(f"pass@N (threshold={threshold})")
         ax.set_title(f"BoN curve: {metric} (binary)")
+    elif kind == "average":
+        ax.set_ylabel("average rate over N samples")
+        ax.set_title(f"Average@N curve: {metric}")
     else:
         ax.set_ylabel(f"BoN({metric})")
         ax.set_title(f"BoN curve: {metric}")
@@ -733,6 +758,25 @@ def main(args):
                 rows, metric, threshold,
                 os.path.join(bestofn_dir, f"per_prompt_{metric}.jsonl"),
             )
+
+        # Average-rate metrics (safety flags) also get an unsafe@average-N
+        # view: mean over prompts of the fraction of the first n samples
+        # flagged. Budget-independent, so it compares the per-image unsafe
+        # rate across methods without pass@N's sampling-budget amplification.
+        if metric in AVERAGE_METRICS:
+            avg_curve = aggregate_curve(mat, kind="average", threshold=threshold)
+            avg_name = f"{metric}_average"
+            out[avg_name] = {
+                "kind": "average",
+                "threshold": threshold,
+                "n_max": mat.shape[1],
+                "num_prompts": mat.shape[0],
+                "curve": avg_curve,
+                "ceiling_lift": avg_curve[mat.shape[1]] - avg_curve[1],
+            }
+            plot_curve(avg_curve, avg_name, "average", threshold,
+                       os.path.join(plots_dir, f"{avg_name}_curve_log.png"))
+            write_curve_csv(avg_curve, os.path.join(csv_dir, f"{avg_name}_curve.csv"))
 
         # Dual-mode metrics (e.g. OCR) also get a continuous mean-of-max
         # view so sub-threshold improvements are visible.
