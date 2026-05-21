@@ -19,7 +19,7 @@
 # WISE: requires a vLLM OpenAI-compatible endpoint serving the judge model
 # (default Qwen3.5-35B-A3B). Set VLLM_API_BASE / VLLM_API_KEY / JUDGE_MODEL to
 # override defaults. See evaluation/benchmarks/WISE/README.md.
-# DPG-Bench: uses the in-process mPLUG VQA judge (conda env geneval2,
+# DPG-Bench: uses the in-process mPLUG VQA judge (conda env dpg-bench,
 # ModelScope damo/mplug_visual-question-answering_coco_large_en, the official
 # DPG-Bench judge); needs `modelscope`, no vLLM endpoint.
 #
@@ -91,7 +91,7 @@ declare -A metric_env=(
     [dalleval-bias-gender]=dalleval
     [dalleval-bias-attribute]=dalleval
     [dalleval-bias-skintone]=dalleval
-    [dpg-score-mplug]=geneval2
+    [dpg-score-mplug]=dpg-bench
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
