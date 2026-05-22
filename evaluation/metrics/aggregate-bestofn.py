@@ -673,9 +673,9 @@ def _aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir, metric_key="dpg-score"
             }, ensure_ascii=False) + "\n")
 
     # DPG-Bench reports on a 0..100 scale (compute_dpg_bench.py * 100).
-    print(f"  [dpg] Average DPG-Score (first {k} seeds): "
+    print(f"  [{metric_key}] Average DPG-Score (first {k} seeds): "
           f"{average_dpg_score * 100:.4f}")
-    print(f"  [dpg] Best-of-{n_max} DPG-Score (ceiling):   "
+    print(f"  [{metric_key}] Best-of-{n_max} DPG-Score (ceiling):   "
           f"{bestofn_score * 100:.4f}")
     return out
 
