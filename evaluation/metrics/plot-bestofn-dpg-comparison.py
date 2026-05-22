@@ -7,13 +7,18 @@ difference: each method gets a distinct marker (not all circles) so the
 five overlaid curves stay tellable apart in print/grayscale.
 
 Reads, for each method:
-  ${base_root}/<method>/dpg_bench/bestofn/csv/dpg-score_curve.csv
-(written by aggregate-bestofn.py's _aggregate_dpg). Curve values are
-0..1; DPG-Bench is conventionally reported on 0..100, so the y-axis is
-scaled by 100 to match aggregate-bestofn.py's printed numbers.
+  ${base_root}/<method>/dpg_bench/bestofn/csv/<metric_key>_curve.csv
+(written by aggregate-bestofn.py's _aggregate_dpg). ``metric_key`` defaults
+to ``dpg-score-mplug`` (the official ModelScope mPLUG judge); pass
+``--metric_key dpg-score`` to plot the legacy vLLM judge instead. The
+output filename follows the key so the two judges' figures never clobber
+each other. Curve values are 0..1; DPG-Bench is conventionally reported on
+0..100, so the y-axis is scaled by 100 to match aggregate-bestofn.py's
+printed numbers.
 
 Usage:
   python evaluation/metrics/plot-bestofn-dpg-comparison.py --out_dir ./plots
+  python evaluation/metrics/plot-bestofn-dpg-comparison.py --metric_key dpg-score --out_dir ./plots
 """
 import argparse
 import csv
@@ -73,8 +78,10 @@ METHOD_LINESTYLES = {
 }
 
 DATASET = "dpg_bench"
-CSV_NAME = "dpg-score_curve.csv"
-OUTPUT_STEM = "dpg-score"
+# Default to the official ModelScope mPLUG judge. The csv/output stem are
+# derived from the chosen metric_key in main() so the legacy vLLM judge
+# (dpg-score) and mPLUG (dpg-score-mplug) figures never clobber each other.
+DEFAULT_METRIC_KEY = "dpg-score-mplug"
 Y_SCALE = 100.0  # csv stores 0..1; DPG-Bench is reported on 0..100.
 
 
@@ -145,7 +152,8 @@ def main(args):
     })
 
     os.makedirs(args.out_dir, exist_ok=True)
-    plot_one("Overall", CSV_NAME, OUTPUT_STEM, args.base_root, args.out_dir)
+    csv_name = f"{args.metric_key}_curve.csv"
+    plot_one("Overall", csv_name, args.metric_key, args.base_root, args.out_dir)
 
 
 if __name__ == "__main__":
@@ -157,7 +165,13 @@ if __name__ == "__main__":
         help=f"default: {DEFAULT_BASE_ROOT}",
     )
     ap.add_argument(
+        "--metric_key", default=DEFAULT_METRIC_KEY,
+        choices=["dpg-score-mplug", "dpg-score"],
+        help=f"Which judge's curve to plot (default: {DEFAULT_METRIC_KEY}). "
+             f"Reads <metric_key>_curve.csv and writes <metric_key>.png/.pdf.",
+    )
+    ap.add_argument(
         "--out_dir", default="bestofn_plots",
-        help="Directory to write dpg-score.png + .pdf into.",
+        help="Directory to write <metric_key>.png + .pdf into.",
     )
     main(ap.parse_args())
