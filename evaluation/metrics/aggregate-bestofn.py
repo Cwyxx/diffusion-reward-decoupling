@@ -568,8 +568,14 @@ def _plot_spatial_geneval_breakdown(curves, out_path):
     plt.close(fig)
 
 
-def _aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir):
+def _aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir, metric_key="dpg-score"):
     """DPG-Bench: two headline numbers (ELLA official protocol).
+
+    ``metric_key`` is the score key in each row's ``scores`` dict: the legacy
+    vLLM judge writes ``dpg-score``; the official ModelScope mPLUG judge writes
+    ``dpg-score-mplug``. Output filenames and the curves.json entry are keyed
+    off it; a given output dir is scored by only one judge, so they never
+    collide.
 
     * Average DPG-Score: per prompt, mean over the first AVG_DPG_NUM_SEEDS
       seeds; then mean over prompts. This is the standard reportable score
@@ -583,9 +589,9 @@ def _aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir):
     dpg_summary.json, and a per-prompt jsonl carrying both views for
     cross-method row-aligned diffing.
     """
-    mat = build_score_matrix(rows, "dpg-score")
+    mat = build_score_matrix(rows, metric_key)
     if mat is None:
-        raise ValueError("No 'dpg-score' scores found; run scoring first.")
+        raise ValueError(f"No {metric_key!r} scores found; run scoring first.")
     n_prompts, n_max = mat.shape
 
     # Best-of-N capability-upper-bound curve: mean over prompts of max over
@@ -606,7 +612,7 @@ def _aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir):
     average_dpg_score = float(per_prompt_avg.mean())
 
     out = {
-        "dpg-score": {
+        metric_key: {
             "kind": "continuous",
             "n_max": n_max,
             "num_prompts": n_prompts,
@@ -624,9 +630,9 @@ def _aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir):
         }
     }
 
-    write_curve_csv(curve, os.path.join(csv_dir, "dpg-score_curve.csv"))
-    plot_curve(curve, "dpg-score", "continuous", None,
-               os.path.join(plots_dir, "dpg-score_curve_log.png"))
+    write_curve_csv(curve, os.path.join(csv_dir, f"{metric_key}_curve.csv"))
+    plot_curve(curve, metric_key, "continuous", None,
+               os.path.join(plots_dir, f"{metric_key}_curve_log.png"))
 
     summary = {
         "average_dpg_score": average_dpg_score,
@@ -643,13 +649,13 @@ def _aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir):
     grouped = defaultdict(dict)
     prompts = {}
     for r in rows:
-        if "dpg-score" not in r["scores"]:
+        if metric_key not in r["scores"]:
             continue
         sid = r["sample_id"]
         grouped[sid][r.get("seed_index", 0)] = (
-            r["scores"]["dpg-score"], r["image_path"])
+            r["scores"][metric_key], r["image_path"])
         prompts[sid] = r["prompt"]
-    pp_path = os.path.join(bestofn_dir, "per_prompt_dpg-score.jsonl")
+    pp_path = os.path.join(bestofn_dir, f"per_prompt_{metric_key}.jsonl")
     with open(pp_path, "w") as f:
         for sid in sorted(grouped.keys()):
             seed_map = grouped[sid]
@@ -727,9 +733,12 @@ def main(args):
             # WISE has its own per-category + weighted-Overall path.
             out.update(_aggregate_wise(rows, bestofn_dir, plots_dir, csv_dir))
             continue
-        if metric == "dpg-score":
-            # DPG-Bench has its own Average + Best-of-N (ceiling) path.
-            out.update(_aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir))
+        if metric in ("dpg-score", "dpg-score-mplug"):
+            # DPG-Bench has its own Average + Best-of-N (ceiling) path. Both
+            # the legacy vLLM judge (dpg-score) and the official mPLUG judge
+            # (dpg-score-mplug) route here; metric_key keys the output names.
+            out.update(_aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir,
+                                      metric_key=metric))
             continue
         mat = build_score_matrix(rows, metric)
         if mat is None:
