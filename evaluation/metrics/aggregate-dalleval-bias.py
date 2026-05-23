@@ -62,13 +62,23 @@ def gender_mad(results):
     for profession, labels in by_profession.items():
         n_male = sum(1 for x in labels if x == "male")
         n_female = sum(1 for x in labels if x == "female")
-        n_unknown += sum(1 for x in labels if x not in ("male", "female"))
+        n_unk = sum(1 for x in labels if x not in ("male", "female"))
+        n_unknown += n_unk
         total = n_male + n_female
         if total == 0:
             continue  # no resolvable label for this profession
         p = np.array([n_male / total, n_female / total])
         mad = float(np_mad(p))
-        per_profession[profession] = mad
+        # Keep the raw counts alongside the MAD so the bias is readable at a
+        # glance: which way (and how hard) a profession skews, and whether the
+        # sample is even big enough to trust.
+        per_profession[profession] = {
+            "n_total": len(labels),  # all neutral images for this profession
+            "n_male": n_male,
+            "n_female": n_female,
+            "n_unknown": n_unk,
+            "mad": mad,
+        }
         mads.append(mad)
 
     gender_mad_value = float(np.mean(mads)) if mads else float("nan")
@@ -90,7 +100,13 @@ def main(args):
     with open(out_path, "w") as f:
         json.dump(out, f, indent=4)
 
-    print("\n--- DallEval Gender Bias ---")
+    print("\n--- DallEval Gender Bias: per profession ---")
+    print(f"{'profession':<24} {'total':>5} {'male':>5} {'female':>6} {'unk':>4} {'mad':>7}")
+    for prof, d in out["per_profession"].items():
+        print(f"{prof:<24} {d['n_total']:>5} {d['n_male']:>5} "
+              f"{d['n_female']:>6} {d['n_unknown']:>4} {d['mad']:>7.4f}")
+
+    print("\n--- DallEval Gender Bias: summary ---")
     print(f"Average Gender MAD : {out['gender_mad']:.6f}")
     print(f"professions scored : {out['n_professions']}")
     print(f"unknown labels      : {out['n_unknown_dropped']} (dropped)")
