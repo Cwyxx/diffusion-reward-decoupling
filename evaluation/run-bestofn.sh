@@ -98,6 +98,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 GENERATE_PY="${SCRIPT_DIR}/metrics/generate-images-bestofn.py"
 SCORE_PY="${SCRIPT_DIR}/metrics/score-images.py"
 AGGREGATE_PY="${SCRIPT_DIR}/metrics/aggregate-bestofn.py"
+DALLEVAL_AGG_PY="${SCRIPT_DIR}/metrics/aggregate-dalleval-bias.py"
 
 # First GPU from the comma list, used for scoring stage (single GPU is enough).
 score_gpu="${gpus%%,*}"
@@ -161,10 +162,11 @@ if [[ "${dataset}" == unsafe_* ]]; then
     echo "============================================"
 elif [[ "${dataset}" == "dalleval_bias" ]]; then
     echo "============================================"
-    echo "Stage 3: Aggregate skipped for dalleval_bias"
-    echo "  Per-image labels only this round; MAD aggregation will be added"
-    echo "  in a follow-up. See ${output_dir}/evaluation_results.jsonl."
+    echo "Stage 3: Aggregate dalleval_bias (gender-MAD only this round)"
+    echo "  skintone-MAD / attribute disparity still deferred."
     echo "============================================"
+    conda activate "${DEFAULT_ENV}"
+    python "${DALLEVAL_AGG_PY}" --output_dir "${output_dir}"
 else
     echo "============================================"
     echo "Stage 3: Aggregate"

@@ -862,6 +862,12 @@ def main(args):
             todo = results
         else:
             todo = [r for r in results if not _has_metric_score(r, metric)]
+        if metric == "dalleval-bias-gender":
+            # DallEval gender-MAD task uses only neutral ("A person ...") prompts;
+            # gendered prompts trivially resolve to their stated subject. Filtering
+            # here (not just at aggregation) also keeps gendered rows out of `todo`
+            # so resume doesn't perpetually re-list them as missing the label.
+            todo = [r for r in todo if (r.get("metadata") or {}).get("category") == "neutral"]
         print(f"\n=== Scoring with {metric}: {len(todo)}/{len(results)} rows todo (force={args.force}) ===")
         if not todo:
             continue
