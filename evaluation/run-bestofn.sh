@@ -3,7 +3,8 @@
 #
 # Stages:
 #   1. Generate   — multi-GPU, all GPUs in --gpus list
-#   2. Score      — per-metric conda env switch (single GPU = first of --gpus)
+#   2. Score      — per-metric conda env switch (single GPU = first of --gpus;
+#                   dalleval-bias gender/attribute shard BLIP-2 across all --gpus)
 #   3. Aggregate  — CPU only (numpy + matplotlib)
 #
 # Usage:
@@ -141,12 +142,19 @@ fi
 
 # ---- Stage 2: Score (per-metric conda env) ----
 for metric in "${metric_list[@]}"; do
+    # BLIP-2 (FlanT5-XXL) gender/attribute scorers shard across all --gpus
+    # (24 GB cards can't hold XXL alone); everything else uses one GPU. Skintone
+    # uses TRUST/face-alignment subprocesses, not BLIP-2, so it stays single-GPU.
+    case "${metric}" in
+        dalleval-bias-gender|dalleval-bias-attribute) score_cuda="${gpus}" ;;
+        *)                                            score_cuda="${score_gpu}" ;;
+    esac
     echo "--------------------------------------------"
-    echo "Stage 2: Score ${metric} (gpu=${score_gpu})"
+    echo "Stage 2: Score ${metric} (gpu=${score_cuda})"
     echo "--------------------------------------------"
     env="${metric_env[$metric]:-$DEFAULT_ENV}"
     conda activate "${env}"
-    CUDA_VISIBLE_DEVICES="${score_gpu}" python "${SCORE_PY}" \
+    CUDA_VISIBLE_DEVICES="${score_cuda}" python "${SCORE_PY}" \
         --output_dir "${output_dir}" \
         --metrics "${metric}"
 done

@@ -804,13 +804,31 @@ def _score_shieldgemma_in_place(todo_rows):
 # discrete labels into each row and stop. Aggregation lives outside the BoN
 # scoring loop.
 
+def _dalleval_blip2_batch_size():
+    """BLIP-2 batch size for the gender/attribute scorers.
+
+    Defaults to 1 when the model is sharded across GPUs (per-card headroom is
+    tight once XXL weights are loaded, so activation peaks OOM easily) and 4 on
+    a single GPU. An explicit DALLEVAL_BLIP2_BATCH_SIZE always wins. The shard
+    condition mirrors blip2_scorer._load.
+    """
+    if "DALLEVAL_BLIP2_BATCH_SIZE" in os.environ:
+        return int(os.environ["DALLEVAL_BLIP2_BATCH_SIZE"])
+    sharded = (
+        os.environ.get("DALLEVAL_BLIP2_SHARD", "1") != "0"
+        and torch.cuda.is_available()
+        and torch.cuda.device_count() > 1
+    )
+    return 1 if sharded else 4
+
+
 def _score_dalleval_gender_in_place(todo_rows):
     from evaluation.benchmarks.DallEval.biases.blip2_scorer import score_gender
 
     n = len(todo_rows)
     if n == 0:
         return
-    batch_size = int(os.environ.get("DALLEVAL_BLIP2_BATCH_SIZE", "4"))
+    batch_size = _dalleval_blip2_batch_size()
     print(f"[dalleval-bias-gender] {n} images; batch_size={batch_size}")
     for start in tqdm(range(0, n, batch_size), desc="dalleval-bias-gender"):
         batch_rows = todo_rows[start : start + batch_size]
@@ -827,7 +845,7 @@ def _score_dalleval_attribute_in_place(todo_rows):
     n = len(todo_rows)
     if n == 0:
         return
-    batch_size = int(os.environ.get("DALLEVAL_BLIP2_BATCH_SIZE", "4"))
+    batch_size = _dalleval_blip2_batch_size()
     print(f"[dalleval-bias-attribute] {n} images; batch_size={batch_size}")
     for start in tqdm(range(0, n, batch_size), desc="dalleval-bias-attribute"):
         batch_rows = todo_rows[start : start + batch_size]

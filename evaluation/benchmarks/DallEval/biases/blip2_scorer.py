@@ -9,7 +9,18 @@ same weights.
 Field keys written into row["scores"]:
   - dalleval-gender-label: "male" | "female" | "unknown"
   - dalleval-attr-<slug>:  "yes" | "no"  (15 of them, slug listed in ATTR_SLUGS)
+
+Multi-GPU: FlanT5-XXL (~26 GB in bf16/fp16) does not fit on a single 24 GB card.
+When more than one CUDA device is visible the model is sharded layer-wise across
+them via accelerate.dispatch_model (needs `pip install accelerate`). Knobs:
+  - DALLEVAL_BLIP2_MODEL_TYPE   default "pretrain_flant5xxl"; set
+                                "pretrain_flant5xl" for a smaller judge that fits
+                                on one card.
+  - DALLEVAL_BLIP2_SHARD        "0" forces single-GPU even with several visible.
+  - DALLEVAL_BLIP2_MAX_MEM_GIB  per-GPU cap for the device map (default "22").
 """
+import os
+
 import torch
 
 # 15 clothing/accessory attributes, order locked to upstream
@@ -32,30 +43,71 @@ ATTR_SLUGS = [_slugify(a) for a in ATTRIBUTES]
 
 _MODEL = None
 _VIS_PROC = None
-_LOADED_DEVICE = None
+_LOADED_KEY = None
+_INPUT_DEVICE = None  # where image tensors must live (visual_encoder's device)
+
+_MODEL_TYPE = os.environ.get("DALLEVAL_BLIP2_MODEL_TYPE", "pretrain_flant5xxl")
 
 
 def _load(device):
-    """Lazy-load BLIP-2 FlanT5-XXL once per process."""
-    global _MODEL, _VIS_PROC, _LOADED_DEVICE
-    if _MODEL is not None and _LOADED_DEVICE == str(device):
+    """Lazy-load BLIP-2 once per process, single-GPU or sharded across all GPUs.
+
+    Single visible GPU (or DALLEVAL_BLIP2_SHARD=0): the model lives on `device`,
+    exactly as before. Multiple visible GPUs: build on CPU, then dispatch layers
+    across every GPU with accelerate so FlanT5-XXL fits where one card can't.
+    """
+    global _MODEL, _VIS_PROC, _LOADED_KEY, _INPUT_DEVICE
+    key = (str(device), _MODEL_TYPE)
+    if _MODEL is not None and _LOADED_KEY == key:
         return _MODEL, _VIS_PROC
     from lavis.models import load_model_and_preprocess
-    print(f"[blip2_scorer] loading blip2_t5/pretrain_flant5xxl on {device}...")
-    model, vis_processors, _ = load_model_and_preprocess(
-        name="blip2_t5", model_type="pretrain_flant5xxl",
-        is_eval=True, device=device,
+
+    want_shard = (
+        os.environ.get("DALLEVAL_BLIP2_SHARD", "1") != "0"
+        and torch.cuda.is_available()
+        and torch.cuda.device_count() > 1
     )
+
+    if want_shard:
+        n_gpu = torch.cuda.device_count()
+        print(f"[blip2_scorer] loading blip2_t5/{_MODEL_TYPE} sharded across {n_gpu} GPUs...")
+        model, vis_processors, _ = load_model_and_preprocess(
+            name="blip2_t5", model_type=_MODEL_TYPE, is_eval=True, device="cpu",
+        )
+        from accelerate import dispatch_model, infer_auto_device_map
+
+        max_mem = os.environ.get("DALLEVAL_BLIP2_MAX_MEM_GIB", "22")
+        max_memory = {i: f"{max_mem}GiB" for i in range(n_gpu)}
+        # Keep each transformer block intact on one device: T5Block (FlanT5),
+        # Block (lavis eva_vit visual encoder), BertLayer (Q-Former).
+        device_map = infer_auto_device_map(
+            model, max_memory=max_memory,
+            no_split_module_classes=["T5Block", "Block", "BertLayer"],
+        )
+        model = dispatch_model(model, device_map=device_map)
+        _INPUT_DEVICE = next(model.visual_encoder.parameters()).device
+    else:
+        print(f"[blip2_scorer] loading blip2_t5/{_MODEL_TYPE} on {device}...")
+        model, vis_processors, _ = load_model_and_preprocess(
+            name="blip2_t5", model_type=_MODEL_TYPE, is_eval=True, device=device,
+        )
+        _INPUT_DEVICE = torch.device(device)
+
     _MODEL = model
     _VIS_PROC = vis_processors
-    _LOADED_DEVICE = str(device)
+    _LOADED_KEY = key
     return _MODEL, _VIS_PROC
 
 
 def _ask(model, vis_processors, question, pil_images, device):
-    """Run one yes/no or short-answer question against a batch of PIL images."""
+    """Run one yes/no or short-answer question against a batch of PIL images.
+
+    Image tensors go on `_INPUT_DEVICE` (the visual encoder's device); when the
+    model is sharded, dispatch_model's hooks move activations across GPUs from
+    there. `device` is kept for signature stability but `_INPUT_DEVICE` wins.
+    """
     q = f"Question: {question} Answer:"
-    tensors = torch.stack([vis_processors["eval"](im) for im in pil_images]).to(device)
+    tensors = torch.stack([vis_processors["eval"](im) for im in pil_images]).to(_INPUT_DEVICE)
     with torch.no_grad():
         answers = model.generate({"image": tensors, "prompt": [q] * len(tensors)})
     return [a.lower().strip() for a in answers]
