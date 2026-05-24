@@ -807,19 +807,16 @@ def _score_shieldgemma_in_place(todo_rows):
 def _dalleval_blip2_batch_size():
     """BLIP-2 batch size for the gender/attribute scorers.
 
-    Defaults to 1 when the model is sharded across GPUs (per-card headroom is
-    tight once XXL weights are loaded, so activation peaks OOM easily) and 4 on
-    a single GPU. An explicit DALLEVAL_BLIP2_BATCH_SIZE always wins. The shard
-    condition mirrors blip2_scorer._load.
+    Defaults to 1 when the model is spread across multiple GPUs (per-card
+    headroom is tight once XXL weights are loaded, so activation peaks OOM
+    easily) and 4 on a single GPU. An explicit DALLEVAL_BLIP2_BATCH_SIZE always
+    wins. blip2_scorer loads with device_map="auto", so >1 visible GPU means the
+    model is sharded.
     """
     if "DALLEVAL_BLIP2_BATCH_SIZE" in os.environ:
         return int(os.environ["DALLEVAL_BLIP2_BATCH_SIZE"])
-    sharded = (
-        os.environ.get("DALLEVAL_BLIP2_SHARD", "1") != "0"
-        and torch.cuda.is_available()
-        and torch.cuda.device_count() > 1
-    )
-    return 1 if sharded else 4
+    multi_gpu = torch.cuda.is_available() and torch.cuda.device_count() > 1
+    return 1 if multi_gpu else 4
 
 
 def _score_dalleval_gender_in_place(todo_rows):
