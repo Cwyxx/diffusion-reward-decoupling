@@ -39,7 +39,7 @@ export TOKENIZERS_PARALLELISM=False
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
 method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica, aigi-detector)}
 n_max=${4:?n_max (e.g. 32)}
 
 # ---- Family-aware defaults (derived from method suffix) ----
@@ -78,6 +78,10 @@ case "${dataset}" in
     dalleval_bias)    metric_list=(dalleval-bias-gender) ;;
     unsafe_template|unsafe_4chan|unsafe_lexica)
                       metric_list=(sd-safety-checker shieldgemma) ;;
+    # aigi-detector: 1000 image-level MSCOCO val2014 prompts, generation only for
+    # now. Score model is TBD, so metric_list is empty -> Stage 2/3 are skipped.
+    # Add the scorer metric(s) here once chosen.
+    aigi-detector)    metric_list=() ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -169,6 +173,11 @@ if [[ "${dataset}" == unsafe_* ]]; then
     echo "============================================"
     echo "Stage 3: Aggregate skipped for unsafe-rate eval"
     echo "  Use ${output_dir}/average_scores.json"
+    echo "============================================"
+elif [[ "${dataset}" == "aigi-detector" ]]; then
+    echo "============================================"
+    echo "Stage 3: Aggregate skipped (aigi-detector: generation only, scorer TBD)"
+    echo "  Images: ${output_dir}/images/"
     echo "============================================"
 elif [[ "${dataset}" == "dalleval_bias" ]]; then
     echo "============================================"

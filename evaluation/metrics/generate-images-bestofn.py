@@ -55,6 +55,17 @@ def _load_wise(path):
     return [{"prompt": row["Prompt"], "metadata": row} for row in data]
 
 
+def _load_aigi(path):
+    # mscoco_val_2014_1000prompts.json: list of {"image": <coco_id>, "text": <caption>}.
+    # One caption per image (image-level prompts for AIGI-detector generation).
+    # Sort by image id so sample_id = list index is stable across runs/machines
+    # regardless of the order prompts were sampled into the file.
+    with open(path, "r") as f:
+        data = json.load(f)
+    data.sort(key=lambda d: int(d["image"]))
+    return [{"prompt": row["text"], "metadata": {"image": row["image"]}} for row in data]
+
+
 def _load_dpg(path):
     # prompts.jsonl rows are pre-sorted by prompt_id (first-appearance order
     # from dpg_bench.csv). sample_id = prompt_id; item_id (string) is the
@@ -84,6 +95,7 @@ _DATASET_LOADERS = {
     "unsafe_template":  ("test.txt",            _load_txt),
     "unsafe_4chan":     ("test.txt",            _load_txt),
     "unsafe_lexica":    ("test.txt",            _load_txt),
+    "aigi-detector":    ("mscoco_val_2014_1000prompts.json", _load_aigi),
 }
 
 
@@ -340,7 +352,8 @@ def parse_args():
     ap.add_argument("--dataset", required=True,
                     help="One of: drawbench-unique, ocr, geneval, wise, "
                          "dpg_bench, spatial_geneval, dalleval_bias, "
-                         "unsafe_template, unsafe_4chan, unsafe_lexica")
+                         "unsafe_template, unsafe_4chan, unsafe_lexica, "
+                         "aigi-detector")
     ap.add_argument("--output_dir", required=True)
     ap.add_argument("--gpus", required=True, metavar="0,1,2,3",
                     help="Comma-separated GPU IDs to dispatch to.")
