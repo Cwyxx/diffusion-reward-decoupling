@@ -54,7 +54,10 @@ def gender_mad(results):
         label = (r.get("scores") or {}).get("dalleval-gender-label")
         if label is None:
             continue
-        profession = meta.get("profession")
+        # Bare neutral prompts (e.g. "A person") have profession=None in the
+        # dataset; give them a readable key so grouping/sorting/printing (which
+        # can't compare None to str) work and the row stays visible.
+        profession = meta.get("profession") or "(unspecified)"
         by_profession[profession].append(label)
 
     per_profession = {}
