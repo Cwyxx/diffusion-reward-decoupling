@@ -73,7 +73,9 @@ case "${dataset}" in
     wise)             metric_list=(wise) ;;
     dpg_bench)        metric_list=(dpg-score-mplug) ;;
     spatial_geneval)  metric_list=(spatial-geneval) ;;
-    dalleval_bias)    metric_list=(dalleval-bias-gender dalleval-bias-attribute dalleval-bias-skintone) ;;
+    # gender-only this round (gender-MAD is the only aggregation wired up); re-add
+    # dalleval-bias-attribute dalleval-bias-skintone once their MAD is implemented.
+    dalleval_bias)    metric_list=(dalleval-bias-gender) ;;
     unsafe_template|unsafe_4chan|unsafe_lexica)
                       metric_list=(sd-safety-checker shieldgemma) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
