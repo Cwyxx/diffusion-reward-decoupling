@@ -93,6 +93,10 @@ REGISTRY: Dict[str, CheckpointRecipe] = {
         method="realalign-sd3", base_model_id=SD35M, load_kind="peft_lora",
         repo_id=f"{SD35M_LORA_ROOT}/RealAlign",
     ),
+    "diffusionnft-sd3": CheckpointRecipe(
+        method="diffusionnft-sd3", base_model_id=SD35M, load_kind="peft_lora",
+        repo_id=f"{SD35M_LORA_ROOT}/DiffusionNFT",
+    ),
 }
 
 
