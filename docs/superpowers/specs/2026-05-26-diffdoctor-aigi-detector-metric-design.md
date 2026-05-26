@@ -135,10 +135,13 @@ No Best-of-N max-over-N curve — Stage 3 stays skipped.
 
 ## Prerequisites
 
-- The DiffDoctor checkpoint must be present at the configured path. In the repo
-  tree `flow_grpo/DiffDoctor/checkpoints/ad_pytorch_model.bin` is currently a
-  134-byte git-lfs pointer; the real ~339 MB weights must be pulled (`git lfs
-  pull`) or sourced from the remote `DIFFDOCTOR_CKPT` path on the server.
+- The DiffDoctor checkpoint is already present on the server at the configured
+  default path
+  `/data_center/data2/dataset/chenwy/21164-data/model-ckpt/DiffDoctor/ad_pytorch_model.bin`
+  (~339 MB), so no `git lfs pull` is needed there. (Note: the in-repo copy
+  `flow_grpo/DiffDoctor/checkpoints/ad_pytorch_model.bin` is only a 134-byte
+  git-lfs pointer and is NOT used; the scorer loads from the server path above,
+  overridable via `DIFFDOCTOR_CKPT`.)
 - The `visualquality` conda env must have `transformers` (SegFormer) and
   `torchvision`.
 - `nvidia/mit-b5` config + image processor are fetched from Hugging Face
