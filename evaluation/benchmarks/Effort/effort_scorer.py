@@ -220,13 +220,17 @@ def _load(device: str):
     state = {k.replace("module.", ""): v for k, v in state.items()}
     result = model.load_state_dict(state, strict=False)
     # strict=False tolerates benign mismatches (e.g. position_ids), but the
-    # trained head + SVD residuals MUST have matched the model. Guard the exact
-    # silent-failure mode that would otherwise yield a randomly-initialized head.
-    critical_unloaded = [
-        k for k in state
-        if (k.startswith("head.") or k.endswith("_residual"))
-        and k in result.unexpected_keys
-    ]
+    # trained head + SVD residuals MUST have matched the model. Guard the
+    # silent-failure mode that would otherwise yield a randomly-initialized head:
+    #   - missing_keys: a model param the checkpoint did NOT supply -> left at
+    #     random init (the actual "random head" failure).
+    #   - unexpected_keys: a checkpoint param the model could NOT place -> a
+    #     name/arch mismatch (the other side of the same problem).
+    def _is_critical(k):
+        return k.startswith("head.") or k.endswith("_residual")
+
+    critical_unloaded = [k for k in result.missing_keys if _is_critical(k)]
+    critical_unloaded += [k for k in result.unexpected_keys if _is_critical(k)]
     if critical_unloaded:
         raise RuntimeError(
             f"Effort checkpoint loaded but critical weights did not match the "
