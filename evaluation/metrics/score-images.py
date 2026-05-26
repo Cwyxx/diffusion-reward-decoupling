@@ -28,7 +28,7 @@ AVAILABLE_METRICS = [
     "ocr", "geneval", "wise", "dpg-score", "dpg-score-mplug", "spatial-geneval",
     "sd-safety-checker", "shieldgemma",
     "dalleval-bias-gender", "dalleval-bias-attribute", "dalleval-bias-skintone",
-    "diffdoctor",
+    "diffdoctor", "effort",
 ]
 
 # Metrics whose scoring functions require small batches.
@@ -62,6 +62,7 @@ METRIC_OUTPUT_KEYS = {
     "dalleval-bias-attribute": _dalleval_attr_keys(),
     "dalleval-bias-skintone":  ("dalleval-skintone-monk",),
     "diffdoctor": ("diffdoctor-clean-rate", "diffdoctor-clean-area"),
+    "effort": ("effort-real-score",),
 }
 
 
@@ -827,6 +828,33 @@ def _score_diffdoctor_in_place(todo_rows):
     torch.cuda.empty_cache()
 
 
+# ------------------------- Effort realism scorer -------------------------
+
+def _score_effort_in_place(todo_rows):
+    from evaluation.benchmarks.Effort.effort_scorer import (
+        score_images as score_effort,
+    )
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+    batch_size = int(os.environ.get("EFFORT_BATCH_SIZE", "8"))
+    print(f"[effort] {n} images to score; batch_size={batch_size}")
+
+    for start in tqdm(range(0, n, batch_size), desc="effort"):
+        batch_rows = todo_rows[start : start + batch_size]
+        images = [_open_rgb_image(r["image_path"]) for r in batch_rows]
+        score_dicts = score_effort(images, device="cuda", batch_size=batch_size)
+        if len(score_dicts) != len(batch_rows):
+            raise RuntimeError(
+                f"effort returned {len(score_dicts)} scores for "
+                f"{len(batch_rows)} images"
+            )
+        for row, scores in zip(batch_rows, score_dicts):
+            row["scores"].update(scores)
+    torch.cuda.empty_cache()
+
+
 # ------------------------- DallEval social-bias judges -------------------------
 # Three per-image classifiers (gender / attribute / skintone). Per-prompt MAD
 # aggregation is intentionally *not* done here — these scorers just write
@@ -942,6 +970,10 @@ def main(args):
 
         if metric == "diffdoctor":
             _score_diffdoctor_in_place(todo)
+            continue
+
+        if metric == "effort":
+            _score_effort_in_place(todo)
             continue
 
         if metric == "dalleval-bias-gender":

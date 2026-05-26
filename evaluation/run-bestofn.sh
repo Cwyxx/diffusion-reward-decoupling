@@ -78,9 +78,10 @@ case "${dataset}" in
     dalleval_bias)    metric_list=(dalleval-bias-gender) ;;
     unsafe_template|unsafe_4chan|unsafe_lexica)
                       metric_list=(sd-safety-checker shieldgemma) ;;
-    # aigi-detector: 1000 image-level MSCOCO val2014 prompts. Scored by the
-    # DiffDoctor artifact detector; results flat-averaged into average_scores.json.
-    aigi-detector)    metric_list=(diffdoctor) ;;
+    # aigi-detector: 1000 image-level MSCOCO val2014 prompts. Scored by two
+    # detectors — DiffDoctor (pixel artifacts) and Effort (AIGI detectability);
+    # results flat-averaged into average_scores.json.
+    aigi-detector)    metric_list=(diffdoctor effort) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -99,6 +100,7 @@ declare -A metric_env=(
     [dalleval-bias-skintone]=dalleval
     [dpg-score-mplug]=dpg-bench
     [diffdoctor]=visualquality
+    [effort]=visualquality
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -176,8 +178,8 @@ if [[ "${dataset}" == unsafe_* ]]; then
     echo "============================================"
 elif [[ "${dataset}" == "aigi-detector" ]]; then
     echo "============================================"
-    echo "Stage 3: Aggregate skipped (aigi-detector: flat-average metric)"
-    echo "  See ${output_dir}/average_scores.json"
+    echo "Stage 3: Aggregate skipped (aigi-detector: flat-average metrics)"
+    echo "  DiffDoctor + Effort scores in ${output_dir}/average_scores.json"
     echo "============================================"
 elif [[ "${dataset}" == "dalleval_bias" ]]; then
     echo "============================================"
