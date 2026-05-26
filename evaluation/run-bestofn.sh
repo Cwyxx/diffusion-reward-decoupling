@@ -60,6 +60,12 @@ else
     guidance_scale=7.5
 fi
 
+# ---- Per-method overrides ----
+# DiffusionNFT is trained CFG-free; sampling with CFG > 1 degrades it.
+if [[ "${method}" == "diffusionnft-sd3" ]]; then
+    guidance_scale=1.0
+fi
+
 # ---- Config ----
 base_root="/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling"
 output_dir="${base_root}/bestofn-eval/${family}/${method}/${dataset}"
