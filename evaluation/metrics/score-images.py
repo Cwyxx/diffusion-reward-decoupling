@@ -28,7 +28,7 @@ AVAILABLE_METRICS = [
     "ocr", "geneval", "wise", "dpg-score", "dpg-score-mplug", "spatial-geneval",
     "sd-safety-checker", "shieldgemma",
     "dalleval-bias-gender", "dalleval-bias-attribute", "dalleval-bias-skintone",
-    "diffdoctor", "effort",
+    "diffdoctor", "effort", "pal4vst",
 ]
 
 # Metrics whose scoring functions require small batches.
@@ -63,6 +63,7 @@ METRIC_OUTPUT_KEYS = {
     "dalleval-bias-skintone":  ("dalleval-skintone-monk",),
     "diffdoctor": ("diffdoctor-clean-rate", "diffdoctor-clean-area"),
     "effort": ("effort-real-score",),
+    "pal4vst": ("pal4vst-clean-rate", "pal4vst-clean-area"),
 }
 
 
@@ -855,6 +856,27 @@ def _score_effort_in_place(todo_rows):
     torch.cuda.empty_cache()
 
 
+# ------------------------- PAL4VST artifact-localization scorer -------------------------
+
+def _score_pal4vst_in_place(todo_rows):
+    from evaluation.benchmarks.PAL4VST.pal4vst_scorer import (
+        score_images as score_pal4vst,
+    )
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+    # The deployed torchscript net is fixed at batch_size=1, so score one image
+    # at a time and load lazily to keep memory flat over the full dataset.
+    print(f"[pal4vst] {n} images to score (deployed net is batch_size=1)")
+
+    for row in tqdm(todo_rows, desc="pal4vst"):
+        img = _open_rgb_image(row["image_path"])
+        scores = score_pal4vst([img], device="cuda")[0]
+        row["scores"].update(scores)
+    torch.cuda.empty_cache()
+
+
 # ------------------------- DallEval social-bias judges -------------------------
 # Three per-image classifiers (gender / attribute / skintone). Per-prompt MAD
 # aggregation is intentionally *not* done here — these scorers just write
@@ -974,6 +996,10 @@ def main(args):
 
         if metric == "effort":
             _score_effort_in_place(todo)
+            continue
+
+        if metric == "pal4vst":
+            _score_pal4vst_in_place(todo)
             continue
 
         if metric == "dalleval-bias-gender":
