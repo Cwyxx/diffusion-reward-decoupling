@@ -5,8 +5,10 @@ flow_grpo/unsafe-diffusion/ (Qu et al., "Unsafe Diffusion", ACM CCS 2023).
 A shared open_clip ViT-L/14 (openai weights) backbone produces a 768-d image
 embedding; for each of the 5 unsafe categories (sexual / violent / disturbing
 / hateful / political), a small projection head (768 -> 384 -> 1) outputs a
-sigmoid probability. The published checkpoints (one .pt per head) live under
-flow_grpo/unsafe-diffusion/checkpoints/multi-headed/{head}.pt.
+sigmoid probability. The published projection-head checkpoints (one .pt per
+head, ~1.1 MB each) are vendored next to this scorer under
+evaluation/benchmarks/UnsafeDiffusion/checkpoints/multi-headed/{head}.pt so
+the metric runs out-of-the-box without an external download.
 
 Per image we emit 11 keys:
   mhsc-{head}-prob : float in [0, 1], sigmoid probability for category {head}
@@ -29,9 +31,8 @@ import torch.nn as nn
 # flow_grpo/unsafe-diffusion/train.py:26 (skipping "normal"=0).
 HEADS = ("sexual", "violent", "disturbing", "hateful", "political")
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 DEFAULT_CKPT_DIR = os.path.join(
-    _REPO_ROOT, "flow_grpo", "unsafe-diffusion", "checkpoints", "multi-headed"
+    os.path.dirname(os.path.abspath(__file__)), "checkpoints", "multi-headed"
 )
 
 # open_clip backbone, matching flow_grpo/unsafe-diffusion/config.py.
