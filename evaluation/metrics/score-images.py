@@ -26,7 +26,7 @@ from flow_grpo.rewards import multi_score
 AVAILABLE_METRICS = [
     "pickscore", "imagereward", "aesthetic", "hpsv3", "deqa", "visualquality_r1",
     "ocr", "geneval", "wise", "dpg-score", "dpg-score-mplug", "spatial-geneval",
-    "sd-safety-checker", "shieldgemma",
+    "sd-safety-checker", "shieldgemma", "mhsc",
     "dalleval-bias-gender", "dalleval-bias-attribute", "dalleval-bias-skintone",
     "diffdoctor", "effort", "pal4vst", "drct",
 ]
@@ -57,6 +57,19 @@ METRIC_OUTPUT_KEYS = {
         "shieldgemma-dangerous",
         "shieldgemma-violence-gore",
         "shieldgemma-unsafe",
+    ),
+    "mhsc": (
+        "mhsc-sexual-prob",
+        "mhsc-violent-prob",
+        "mhsc-disturbing-prob",
+        "mhsc-hateful-prob",
+        "mhsc-political-prob",
+        "mhsc-sexual",
+        "mhsc-violent",
+        "mhsc-disturbing",
+        "mhsc-hateful",
+        "mhsc-political",
+        "mhsc-unsafe",
     ),
     "dalleval-bias-gender":    ("dalleval-gender-label",),
     "dalleval-bias-attribute": _dalleval_attr_keys(),
@@ -111,6 +124,9 @@ def run_metric(metric, image_paths, prompts, metadatas, batch_size, device):
 
     if metric in {"sd-safety-checker", "shieldgemma"}:
         raise RuntimeError(f"metric={metric} must be routed via its ResponsibleAI scorer")
+
+    if metric == "mhsc":
+        raise RuntimeError("metric=mhsc must be routed via _score_mhsc_in_place")
 
     scoring_fn = multi_score(device, {metric: 1.0})
     all_scores = []
@@ -905,6 +921,33 @@ def _score_drct_in_place(todo_rows):
     torch.cuda.empty_cache()
 
 
+# ------------------------- Multi-Headed Safety Classifier scorer -------------------------
+
+def _score_mhsc_in_place(todo_rows):
+    from evaluation.benchmarks.UnsafeDiffusion.mhsc_scorer import (
+        score_images as score_mhsc,
+    )
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+    batch_size = int(os.environ.get("MHSC_BATCH_SIZE", "50"))
+    print(f"[mhsc] {n} images to score; batch_size={batch_size}")
+
+    for start in tqdm(range(0, n, batch_size), desc="mhsc"):
+        batch_rows = todo_rows[start : start + batch_size]
+        images = [_open_rgb_image(r["image_path"]) for r in batch_rows]
+        score_dicts = score_mhsc(images, device="cuda", batch_size=batch_size)
+        if len(score_dicts) != len(batch_rows):
+            raise RuntimeError(
+                f"mhsc returned {len(score_dicts)} scores for "
+                f"{len(batch_rows)} images"
+            )
+        for row, scores in zip(batch_rows, score_dicts):
+            row["scores"].update(scores)
+    torch.cuda.empty_cache()
+
+
 # ------------------------- DallEval social-bias judges -------------------------
 # Three per-image classifiers (gender / attribute / skintone). Per-prompt MAD
 # aggregation is intentionally *not* done here — these scorers just write
@@ -1016,6 +1059,10 @@ def main(args):
 
         if metric == "shieldgemma":
             _score_shieldgemma_in_place(todo)
+            continue
+
+        if metric == "mhsc":
+            _score_mhsc_in_place(todo)
             continue
 
         if metric == "diffdoctor":

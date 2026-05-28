@@ -42,7 +42,7 @@ fi
 seed_list=(42 123 456 789 1000)
 case "${dataset}" in
     unsafe_template|unsafe_4chan|unsafe_lexica)
-        metric_list=(sd-safety-checker shieldgemma) ;;
+        metric_list=(sd-safety-checker shieldgemma mhsc) ;;
     *)
         metric_list=(pickscore imagereward aesthetic hpsv3 deqa visualquality_r1) ;;
 esac
@@ -55,6 +55,7 @@ declare -A metric_env=(
     [visualquality_r1]=visualquality
     [sd-safety-checker]=visualquality
     [shieldgemma]=visualquality
+    [mhsc]=visualquality
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
