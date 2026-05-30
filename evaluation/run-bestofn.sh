@@ -39,7 +39,7 @@ export TOKENIZERS_PARALLELISM=False
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
 method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3, diffusionnft-sd3)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica, aigi-detector)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica, aigi-detector, anytext-en, anytext-zh)}
 n_max=${4:?n_max (e.g. 32)}
 
 # ---- Family-aware defaults (derived from method suffix) ----
@@ -89,6 +89,10 @@ case "${dataset}" in
     # PAL4VST (perceptual-artifacts localization) and DRCT (CLIP ViT-L/14 AIGI
     # detector); flat-averaged into average_scores.json.
     aigi-detector)    metric_list=(diffdoctor effort pal4vst drct) ;;
+    # AnyText-Benchmark text rendering (anytext-en=laion_word EN, anytext-zh=wukong_word ZH).
+    # Scoring (anytext-ocr: Sen.ACC + NED via DuGuangOCR) is not wired up yet, so for now
+    # these run GENERATE-ONLY: empty metric_list skips Stage 2, and Stage 3 is skipped below.
+    anytext-en|anytext-zh) metric_list=() ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -190,6 +194,11 @@ elif [[ "${dataset}" == "aigi-detector" ]]; then
     echo "============================================"
     echo "Stage 3: Aggregate skipped (aigi-detector: flat-average metrics)"
     echo "  DiffDoctor + Effort + PAL4VST + DRCT scores in ${output_dir}/average_scores.json"
+    echo "============================================"
+elif [[ "${dataset}" == anytext-* ]]; then
+    echo "============================================"
+    echo "Stage 2+3 skipped (anytext-*: generate-only for now)"
+    echo "  Images in ${output_dir}/; OCR scoring (anytext-ocr) deferred to next step."
     echo "============================================"
 elif [[ "${dataset}" == "dalleval_bias" ]]; then
     echo "============================================"
