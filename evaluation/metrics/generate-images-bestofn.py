@@ -96,6 +96,8 @@ _DATASET_LOADERS = {
     "unsafe_4chan":     ("test.txt",            _load_txt),
     "unsafe_lexica":    ("test.txt",            _load_txt),
     "aigi-detector":    ("mscoco_val_2014_1000prompts.json", _load_aigi),
+    "anytext-en":       ("test.jsonl",            _load_jsonl),
+    "anytext-zh":       ("test.jsonl",            _load_jsonl),
 }
 
 
