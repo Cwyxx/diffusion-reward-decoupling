@@ -29,6 +29,7 @@ AVAILABLE_METRICS = [
     "sd-safety-checker", "shieldgemma", "mhsc",
     "dalleval-bias-gender", "dalleval-bias-attribute", "dalleval-bias-skintone",
     "diffdoctor", "effort", "pal4vst", "drct",
+    "anytext-ocr",
 ]
 
 # Metrics whose scoring functions require small batches.
@@ -78,6 +79,7 @@ METRIC_OUTPUT_KEYS = {
     "effort": ("effort-real-score",),
     "pal4vst": ("pal4vst-clean-rate", "pal4vst-clean-area"),
     "drct": ("drct-real-score",),
+    "anytext-ocr": ("anytext-senacc", "anytext-ned"),
 }
 
 
@@ -921,6 +923,39 @@ def _score_drct_in_place(todo_rows):
     torch.cuda.empty_cache()
 
 
+# ------------------------- AnyText position-free OCR scorer -------------------------
+
+def _score_anytext_in_place(todo_rows):
+    """Position-free DuGuang OCR (Sen.ACC + NED) for anytext-en / anytext-zh.
+
+    Unlike the GPU scorers above, this one needs per-row metadata (the GT 'texts' + 'lang'),
+    so it forwards row['metadata'] to the scorer alongside the image.
+    """
+    from evaluation.benchmarks.AnyText.anytext_scorer import (
+        score_images as score_anytext,
+    )
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+    batch_size = int(os.environ.get("ANYTEXT_BATCH_SIZE", "8"))
+    print(f"[anytext-ocr] {n} images to score; batch_size={batch_size}")
+
+    for start in tqdm(range(0, n, batch_size), desc="anytext-ocr"):
+        batch_rows = todo_rows[start : start + batch_size]
+        images = [_open_rgb_image(r["image_path"]) for r in batch_rows]
+        metadatas = [r.get("metadata") or {} for r in batch_rows]
+        score_dicts = score_anytext(images, metadatas, device="cuda", batch_size=batch_size)
+        if len(score_dicts) != len(batch_rows):
+            raise RuntimeError(
+                f"anytext-ocr returned {len(score_dicts)} scores for "
+                f"{len(batch_rows)} images"
+            )
+        for row, scores in zip(batch_rows, score_dicts):
+            row["scores"].update(scores)
+    torch.cuda.empty_cache()
+
+
 # ------------------------- Multi-Headed Safety Classifier scorer -------------------------
 
 def _score_mhsc_in_place(todo_rows):
@@ -1079,6 +1114,10 @@ def main(args):
 
         if metric == "drct":
             _score_drct_in_place(todo)
+            continue
+
+        if metric == "anytext-ocr":
+            _score_anytext_in_place(todo)
             continue
 
         if metric == "dalleval-bias-gender":
