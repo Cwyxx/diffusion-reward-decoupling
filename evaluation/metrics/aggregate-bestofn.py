@@ -58,14 +58,19 @@ if _REPO_ROOT not in sys.path:
 # unsafe. The per-prompt jsonl lists prompts that produced at least one
 # unsafe image (attacked prompts), with field names inherited from the
 # generic binary path.
-BINARY_METRICS = {"ocr", "geneval", "sd-safety-flag", "shieldgemma-unsafe"}
+# anytext-senacc is a per-image fraction of GT text lines rendered exactly right;
+# pass@N with threshold=1.0 = "at least one of N seeds got every text line correct".
+BINARY_METRICS = {"ocr", "geneval", "sd-safety-flag", "shieldgemma-unsafe", "anytext-senacc"}
 
 # Metrics that ALSO get a continuous mean-of-max view alongside the binary
 # pass@N view. Useful for OCR where the underlying score is a continuous
 # character-level accuracy: pass@N answers "did the method get it 100%
 # right?" while the continuous view answers "how close did it get?",
 # capturing sub-threshold improvements that binary aggregation discards.
-DUAL_METRICS = {"ocr"}
+# anytext-senacc: pass@N answers "all text lines exactly right?", the continuous
+# mean-of-max view answers "what fraction of lines did the best seed get right?".
+# (anytext-ned is not listed anywhere -> defaults to continuous mean-of-max.)
+DUAL_METRICS = {"ocr", "anytext-senacc"}
 
 # Binary metrics that ALSO get an "average rate" view: mean over prompts of
 # the fraction of the first n samples that are flagged. For the safety flags

@@ -90,9 +90,10 @@ case "${dataset}" in
     # detector); flat-averaged into average_scores.json.
     aigi-detector)    metric_list=(diffdoctor effort pal4vst drct) ;;
     # AnyText-Benchmark text rendering (anytext-en=laion_word EN, anytext-zh=wukong_word ZH).
-    # Scoring (anytext-ocr: Sen.ACC + NED via DuGuangOCR) is not wired up yet, so for now
-    # these run GENERATE-ONLY: empty metric_list skips Stage 2, and Stage 3 is skipped below.
-    anytext-en|anytext-zh) metric_list=() ;;
+    # Scored POSITION-FREE: DuGuang OCR detection+recognition over the whole generated image,
+    # then order-independent match against the GT text lines -> Sen.ACC + NED (anytext-ocr).
+    # (GT polygons are NOT used as crop locations: a base T2I model isn't position-controlled.)
+    anytext-en|anytext-zh) metric_list=(anytext-ocr) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -115,6 +116,7 @@ declare -A metric_env=(
     [effort]=visualquality
     [pal4vst]=visualquality
     [drct]=visualquality
+    [anytext-ocr]=anytext
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -194,11 +196,6 @@ elif [[ "${dataset}" == "aigi-detector" ]]; then
     echo "============================================"
     echo "Stage 3: Aggregate skipped (aigi-detector: flat-average metrics)"
     echo "  DiffDoctor + Effort + PAL4VST + DRCT scores in ${output_dir}/average_scores.json"
-    echo "============================================"
-elif [[ "${dataset}" == anytext-* ]]; then
-    echo "============================================"
-    echo "Stage 2+3 skipped (anytext-*: generate-only for now)"
-    echo "  Images in ${output_dir}/; OCR scoring (anytext-ocr) deferred to next step."
     echo "============================================"
 elif [[ "${dataset}" == "dalleval_bias" ]]; then
     echo "============================================"
