@@ -116,7 +116,9 @@ declare -A metric_env=(
     [effort]=visualquality
     [pal4vst]=visualquality
     [drct]=visualquality
-    [anytext-ocr]=anytext
+    # DuGuang OCR is ModelScope-based; reuse the dpg-bench env (already has modelscope
+    # for dpg-score-mplug) instead of a separate anytext env.
+    [anytext-ocr]=dpg-bench
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -28,11 +28,13 @@ are reused verbatim from AnyText (see attribution on each helper); only the *sou
 changes (full-image detection instead of GT polygons), which is the whole point.
 
 Engine = DuGuang (ModelScope), chosen over PaddleOCR for recognition quality / consistency with the
-vendored AnyText code. Runs in the dedicated ``anytext`` conda env (modelscope / easydict / torch
-2.0.x). Model ids are overridable via env vars so the exact ModelScope snapshot can be pinned on the
-server during smoke testing:
+vendored AnyText code. Runs in the ``dpg-bench`` conda env (already carries modelscope for the
+dpg-score-mplug judge, so no separate anytext env is needed; may still need pip Levenshtein /
+scikit-image). Model ids are overridable via env vars so the exact ModelScope snapshot can be pinned
+on the server during smoke testing:
 
-  ANYTEXT_DET_MODEL  (default damo/cv_resnet18_ocr-detection-line-level_damo)
+  ANYTEXT_DET_MODEL  (default damo/cv_resnet18_ocr-detection-db-line-level_damo; the DBNet/torch
+                      detector. Avoid the non-db SegLink++ one — it's TensorFlow and ~38h slow.)
   ANYTEXT_REC_MODEL  (default damo/cv_convnextTiny_ocr-recognition-general_damo)
   ANYTEXT_OCR_DEVICE (default gpu; set cpu to force CPU)
 """
@@ -141,7 +143,12 @@ def pre_process(img_list, shape):
 # ----------------------------------------------------------------------------------------------
 
 REC_IMAGE_SHAPE = "3, 48, 320"
-DEFAULT_DET_MODEL = "damo/cv_resnet18_ocr-detection-line-level_damo"
+# Use the DBNet detection model (model_type='DBNet' -> PyTorch path in ModelScope's
+# ocr_detection_pipeline). The non-db model (cv_resnet18_ocr-detection-line-level_damo) is
+# SegLink++ on TensorFlow, whose TF session re-creates the GPU device on essentially every call
+# (~1.5s each -> ~38h for the full run). DBNet is pure torch, so detection + recognition both
+# stay on torch and load once. Output key is still 'polygons'.
+DEFAULT_DET_MODEL = "damo/cv_resnet18_ocr-detection-db-line-level_damo"
 DEFAULT_REC_MODEL = "damo/cv_convnextTiny_ocr-recognition-general_damo"
 
 _detector = None
@@ -178,8 +185,19 @@ def _load(device: str):
 # ----------------------------------------------------------------------------------------------
 
 def _detect_polygons(detector, rgb_img: np.ndarray) -> list[np.ndarray]:
-    """Run DuGuang detection on an RGB image; return a list of (k, 2) polygon vertex arrays."""
-    out = detector(rgb_img)
+    """Run DuGuang detection on an RGB image; return a list of (k, 2) polygon vertex arrays.
+
+    ModelScope's ocr_detection pipeline RAISES Exception('modelscope error: No text detected')
+    (rather than returning an empty result) when the image contains no legible text. That is
+    extremely common for base T2I models, so treat it as zero detections -> the image scores
+    senacc=ned=0 (nothing matched the GT lines). Any other error is a real failure and re-raised.
+    """
+    try:
+        out = detector(rgb_img)
+    except Exception as e:  # noqa: BLE001 - narrow on message, re-raise everything else
+        if "No text detected" in str(e):
+            return []
+        raise
     polys = out.get("polygons", out.get("det_polygons", []))
     polys = np.asarray(polys)
     if polys.size == 0:
