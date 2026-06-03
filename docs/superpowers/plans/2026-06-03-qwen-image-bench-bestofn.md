@@ -15,6 +15,8 @@
 
 **约定：** 所有 `python`/`pytest` 命令在仓库根目录、conda env `alignprop` 下运行（纯逻辑测试不需要 GPU/ms-swift）。判分相关运行在 env `qwen-image-bench`、4×3090 机器上。
 
+**Worktree dev-setup（已由 controller 完成，实现者无需重做）：** `flow_grpo/Qwen-Image-Bench/` 是父仓库未跟踪的独立上游克隆，只存在于主 checkout。worktree 里已建一个**只读软链** `flow_grpo/Qwen-Image-Bench → 主 checkout 真实目录**，使 `checklists.py`/`score_utils.py` 可被 import、Task 3 测试可在 worktree 跑通；该软链不提交。因此**本计划不修改上游 `flow_grpo/Qwen-Image-Bench` 内任何文件**——所有改动都落在父仓库跟踪树（`dataset/`、`evaluation/`）。judge 引擎封装在我们自己的树内新建（见 Task 4），仅 import 复用上游的 `checklists`/`score_utils`（只读）。
+
 ---
 
 ## File Structure
@@ -27,9 +29,10 @@
 - `evaluation/metrics/test_qwen_image_bench_judge.py` — 上面纯逻辑测试（用 stub judge）。
 - `evaluation/metrics/test_qwen_image_bench_agg.py` — `bon_select` + `_aggregate_qwen_image_bench` 测试。
 
+- `evaluation/metrics/qwen_image_bench_engine.py` — ms-swift TransformersEngine 封装（batch=1 + device_map=auto），等价上游 `MsSwiftJudge` 但落在我们树内（不改上游）。
+
 修改：
 - `evaluation/metrics/generate-images-bestofn.py` — 注册 dataset loader。
-- `flow_grpo/Qwen-Image-Bench/backends/ms_swift_backend.py` — `max_batch_size` 默认 1 + `device_map`。
 - `evaluation/metrics/score-images.py` — `AVAILABLE_METRICS` + `_score_qwen_image_bench_in_place` + dispatch。
 - `evaluation/metrics/aggregate-bestofn.py` — `bon_select` + `_aggregate_qwen_image_bench` + 路由。
 - `evaluation/run-bestofn.sh` — dataset case / metric_env / 多卡 case / 判分模型 env。
@@ -407,22 +410,39 @@ git commit -m "feat(qwen-image-bench): judge reuse layer (tasks + score aggregat
 
 ---
 
-## Task 4: ms-swift 后端 batch=1 + device_map
+## Task 4: judge 引擎封装（tracked 树内，batch=1 + device_map）
+
+不修改未跟踪的上游 `flow_grpo/Qwen-Image-Bench/backends/ms_swift_backend.py`（在 worktree 里无法干净提交、且属用户外部克隆）。改为在我们自己的树内新建一个等价封装，pin `max_batch_size=1`（24 在 3090 上 OOM）与 `device_map="auto"`（把 27B 分片到 4×3090）。该模块 import `swift`（ms-swift≥4.0，仅 GPU 机器的 `qwen-image-bench` env 有），故本机不导入、不单测，只做语法检查；真实加载在 Task 8 冒烟测试验证。
 
 **Files:**
-- Modify: `flow_grpo/Qwen-Image-Bench/backends/ms_swift_backend.py:17-27`
+- Create: `evaluation/metrics/qwen_image_bench_engine.py`
 
-- [ ] **Step 1: 改 `__init__` 签名与引擎构造**
+- [ ] **Step 1: 写封装**
 
-把现有 `__init__`（`def __init__(self, model_path, max_batch_size=24, max_new_tokens=4096):` 起的几行）替换为：
+Create `evaluation/metrics/qwen_image_bench_engine.py`:
 
 ```python
+"""ms-swift TransformersEngine wrapper for the 27B Qwen-Image-Bench Q-Judger.
+
+Vendored into the tracked tree (instead of editing the untracked upstream
+flow_grpo/Qwen-Image-Bench/backends/ms_swift_backend.py) so all integration code
+lives in this repo. Mirrors upstream's MsSwiftJudge but pins max_batch_size=1
+(24 OOMs on 3090s) and device_map="auto" to shard the 27B across the 4x3090
+cards. Imports `swift` (ms-swift>=4.0), only present in the qwen-image-bench
+conda env, so this module is not imported at unit-test time.
+
+Fixed decoding to match Qwen-Image-Bench: seed 42, temperature 0, top_k 1,
+top_p 1.0, repetition_penalty 1.05, enable_thinking True.
+"""
+from swift import TransformersEngine, RequestConfig, InferRequest
+
+
+class QwenImageBenchJudge:
     def __init__(self, model_path, max_batch_size=1, max_new_tokens=4096,
                  device_map="auto"):
-        # 27B judge must shard across the 4x3090 (24GB) cards; max_batch_size=1
-        # to avoid OOM. device_map="auto" lets ms-swift place layers across all
-        # CUDA_VISIBLE_DEVICES. Older ms-swift TransformersEngine may not accept
-        # device_map -> fall back to its default placement.
+        # device_map="auto" shards the 27B across all CUDA_VISIBLE_DEVICES.
+        # Older ms-swift TransformersEngine may not accept device_map -> fall
+        # back to its default placement.
         try:
             self.engine = TransformersEngine(
                 model_path, max_batch_size=max_batch_size, device_map=device_map,
@@ -437,22 +457,40 @@ git commit -m "feat(qwen-image-bench): judge reuse layer (tasks + score aggregat
             repetition_penalty=1.05,
             seed=42,
         )
+        # Enable Qwen3 thinking mode on the engine's default template.
+        try:
+            self.engine.default_template.template_meta.template_kwargs = {
+                "enable_thinking": True
+            }
+        except AttributeError:
+            pass
+
+    def generate_batch(self, items):
+        """Each item: {"system_prompt": str, "user_text": str, "image": PIL.Image}.
+        Returns list of generated text strings (one per item)."""
+        infer_requests = []
+        for item in items:
+            messages = [
+                {"role": "system", "content": item["system_prompt"]},
+                {"role": "user", "content": item["user_text"]},
+            ]
+            infer_requests.append(
+                InferRequest(messages=messages, images=[item["image"]])
+            )
+        resp_list = self.engine.infer(infer_requests, self.request_config)
+        return [r.choices[0].message.content for r in resp_list]
 ```
 
-（下方 `try: self.engine.default_template...` 的 thinking-mode 块保持不变。）
+- [ ] **Step 2: 静态检查（不导入 swift）**
 
-- [ ] **Step 2: 静态检查（不加载模型）**
-
-Run: `python -c "import ast; ast.parse(open('flow_grpo/Qwen-Image-Bench/backends/ms_swift_backend.py').read()); print('syntax OK')"`
+Run: `python -c "import ast; ast.parse(open('evaluation/metrics/qwen_image_bench_engine.py').read()); print('syntax OK')"`
 Expected: `syntax OK`
-
-（真实加载在 Task 8 冒烟测试中验证；本机无 ms-swift/GPU。）
 
 - [ ] **Step 3: 提交**
 
 ```bash
-git add flow_grpo/Qwen-Image-Bench/backends/ms_swift_backend.py
-git commit -m "feat(qwen-image-bench): ms-swift backend batch=1 + device_map for 4-GPU judge"
+git add evaluation/metrics/qwen_image_bench_engine.py
+git commit -m "feat(qwen-image-bench): ms-swift engine wrapper (batch=1, 4-GPU device_map)"
 ```
 
 ---
@@ -551,9 +589,9 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
             parsed_by_dim = None  # already on disk; don't re-append
         else:
             if judge is None:
-                from backends.ms_swift_backend import MsSwiftJudge  # noqa: E402
-                judge = MsSwiftJudge(model_path=model_path, max_batch_size=1,
-                                     max_new_tokens=max_new_tokens)
+                from qwen_image_bench_engine import QwenImageBenchJudge  # noqa: E402
+                judge = QwenImageBenchJudge(model_path=model_path, max_batch_size=1,
+                                            max_new_tokens=max_new_tokens)
             img = load_and_resize_image(r["image_path"])
             tasks = build_tasks(r["prompt"], meta["dims_en"], img)
             outputs = judge.generate_batch([t for _, t in tasks])
@@ -568,8 +606,11 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
             r["scores"][f"qwen-image-bench-{suffix}"] = val
 ```
 
-注：`backends.ms_swift_backend` 可导入是因为 `qwen_image_bench_judge` 在导入时已把
-`flow_grpo/Qwen-Image-Bench` 加入 `sys.path`，且该目录下 `backends/__init__.py` 已存在。
+注：`qwen_image_bench_engine`/`qwen_image_bench_judge` 与 score-images.py 同在
+`evaluation/metrics/`；score-images.py 以脚本方式运行（`python evaluation/metrics/score-images.py`），
+Python 会自动把脚本所在目录加入 `sys.path[0]`，故 `from qwen_image_bench_judge import ...`/
+`from qwen_image_bench_engine import ...` 可直接解析。`qwen_image_bench_judge` 在导入时再把
+软链/真实的 `flow_grpo/Qwen-Image-Bench` 加入 `sys.path`，复用 `checklists`/`score_utils`（只读）。
 
 - [ ] **Step 3: 在 `main` 里加 dispatch**
 
@@ -980,7 +1021,8 @@ git status   # 确认无遗留临时改动
 **Spec coverage（逐节核对）：**
 - 语言 prompt_en/dims_en → Task 1（prepare 抽 prompt_en/dims_en）。✓
 - 本地文件、无下载/无 join → Task 1（直接读本地 jsonl，dims_en 自带）。✓
-- 4×3090 device_map、batch=1、无单 GPU 路径 → Task 4（backend）+ Task 7 Step3（全 GPU）。✓
+- 4×3090 device_map、batch=1、无单 GPU 路径 → Task 4（引擎封装 `qwen_image_bench_engine`）+ Task 7 Step3（全 GPU）。✓
+- 不修改未跟踪上游 QIB（worktree 隔离）→ Task 4 改为树内封装；只读复用 `checklists`/`score_utils`（软链/真实目录）。✓
 - BoN 选择式语义（overall argmax 选图、带出维度、Total 单调/维度可非单调）→ Task 6（`bon_select` + 测试）。✓
 - per-image overall + 5 L1 维度，仅适用维度才写 → Task 3（`scores_from_raw`）+ Task 5。✓
 - 原始判断单独文件 + 兼作缓存 → Task 5（`qwen_image_bench_judge_outputs.jsonl`）。✓
