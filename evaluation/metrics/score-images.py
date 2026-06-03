@@ -30,6 +30,7 @@ AVAILABLE_METRICS = [
     "dalleval-bias-gender", "dalleval-bias-attribute", "dalleval-bias-skintone",
     "diffdoctor", "effort", "pal4vst", "drct",
     "anytext-ocr",
+    "qwen-image-bench",
 ]
 
 # Metrics whose scoring functions require small batches.
@@ -983,6 +984,106 @@ def _score_mhsc_in_place(todo_rows):
     torch.cuda.empty_cache()
 
 
+# ------------------------- Qwen-Image-Bench 27B Q-Judger -------------------------
+# Per image: for each L1 dimension the prompt covers (metadata.dims_en), run the
+# fine-tuned 27B judge over its checklist, parse 0/1/2/N-A -> L3/L2/L1 scores, and
+# write overall(Total) + 5 L1 dimension scores. The 27B model shards across all
+# visible GPUs (device_map="auto"), max_batch_size=1. Raw per-question judgments
+# are appended to qwen_image_bench_judge_outputs.jsonl, which doubles as a
+# judgment cache so a crash-resumed run reuses prior judge calls (the cache is
+# loaded before the loop, so the same (sample_id, seed_index) is never appended
+# twice). Scores are re-derived from the cached raw text each run, so changing
+# the parsing logic takes effect on re-run without re-calling the 27B model.
+# Set QIB_JUDGE_MODEL to point at a local checkpoint (default "Qwen/Qwen-Image-Bench").
+
+_QIB_RAW_FILENAME = "qwen_image_bench_judge_outputs.jsonl"
+
+
+def _qib_load_raw_cache(raw_path):
+    """Return {(sample_id, seed_index): {L1_dim: raw_text}} from prior runs."""
+    cache = {}
+    if not os.path.exists(raw_path):
+        return cache
+    with open(raw_path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            rec = json.loads(line)
+            key = (rec["sample_id"], rec.get("seed_index", 0))
+            cache[key] = rec.get("raw_by_dim", {})
+    return cache
+
+
+def _qib_append_raw(raw_path, row, raw_by_dim, parsed_by_dim):
+    """Append one image's raw + parsed judgments (crash-safe progress)."""
+    meta = row.get("metadata") or {}
+    rec = {
+        "sample_id": row["sample_id"],
+        "seed_index": row.get("seed_index", 0),
+        "ID": meta.get("ID"),
+        "image_path": row["image_path"],
+        "prompt": row["prompt"],
+        "raw_by_dim": raw_by_dim,           # {L1_dim: raw judge text}
+        "parsed_by_dim": parsed_by_dim,     # {L1_dim: fixed L3 score json}
+    }
+    with open(raw_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+
+
+def _score_qwen_image_bench_in_place(todo_rows, output_dir):
+    from qwen_image_bench_judge import build_tasks, load_and_resize_image, scores_from_raw
+
+    n = len(todo_rows)
+    if n == 0:
+        return
+
+    raw_path = os.path.join(output_dir, _QIB_RAW_FILENAME)
+    cache = _qib_load_raw_cache(raw_path)
+    model_path = os.environ.get("QIB_JUDGE_MODEL", "Qwen/Qwen-Image-Bench")
+    max_new_tokens = int(os.environ.get("QIB_MAX_NEW_TOKENS", "4096"))
+    print(f"[qwen-image-bench] {n} images to score; model={model_path}; "
+          f"raw cache hits available={len(cache)}")
+
+    judge = None  # lazy: only construct the 27B engine if a row misses the cache
+    for r in tqdm(todo_rows, desc="qwen-image-bench"):
+        meta = r.get("metadata") or {}
+        if "dims_en" not in meta:
+            raise KeyError(
+                f"qwen-image-bench needs metadata.dims_en; row for "
+                f"{r['image_path']} has metadata keys {sorted(meta.keys())}"
+            )
+        key = (r["sample_id"], r.get("seed_index", 0))
+
+        if key in cache:
+            raw_by_dim = cache[key]
+        else:
+            if judge is None:
+                from qwen_image_bench_engine import QwenImageBenchJudge  # noqa: E402
+                judge = QwenImageBenchJudge(model_path=model_path, max_batch_size=1,
+                                            max_new_tokens=max_new_tokens)
+            img = load_and_resize_image(r["image_path"])
+            tasks = build_tasks(r["prompt"], meta["dims_en"], img)
+            outputs = judge.generate_batch([t for _, t in tasks])
+            raw_by_dim = {l1: out for (l1, _), out in zip(tasks, outputs)}
+
+        overall, dim_scores, parsed_by_dim = scores_from_raw(raw_by_dim)
+        if key not in cache:
+            _qib_append_raw(raw_path, r, raw_by_dim, parsed_by_dim)
+
+        if overall is None:
+            # Every dimension was unparseable / all-N-A: leave the row UNSCORED
+            # so a resume re-lists it (cheap — the raw judgments are cached, only
+            # re-parsing runs, no 27B call). Writing None would make
+            # _has_metric_score treat it as done and hide it from re-runs forever.
+            continue
+        r["scores"]["qwen-image-bench"] = overall
+        for suffix, val in dim_scores.items():
+            r["scores"][f"qwen-image-bench-{suffix}"] = val
+
+    torch.cuda.empty_cache()
+
+
 # ------------------------- DallEval social-bias judges -------------------------
 # Three per-image classifiers (gender / attribute / skintone). Per-prompt MAD
 # aggregation is intentionally *not* done here — these scorers just write
@@ -1118,6 +1219,10 @@ def main(args):
 
         if metric == "anytext-ocr":
             _score_anytext_in_place(todo)
+            continue
+
+        if metric == "qwen-image-bench":
+            _score_qwen_image_bench_in_place(todo, args.output_dir)
             continue
 
         if metric == "dalleval-bias-gender":

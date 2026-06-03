@@ -132,6 +132,38 @@ def bon_continuous(scores: np.ndarray, n: int) -> float:
     return float(np.mean(np.max(scores[:, :n], axis=1)))
 
 
+def bon_select(overall_mat: np.ndarray, dim_mat: np.ndarray, n: int) -> float:
+    """Selection-based BoN: per prompt pick the image with the highest OVERALL
+    score among the first n seeds, then read that winning image's `dim` value;
+    mean over prompts.
+
+    overall_mat and dim_mat share shape and column ordering (seed_index).
+    overall_mat must be dense (every scored image has an overall score); dim_mat
+    may contain NaN where the winning image has no score for that dimension (the
+    judge can return all-N/A for a dimension on a given image). Such prompts are
+    excluded from the mean at that n. Returns NaN if no prompt's n-winner has the
+    dimension.
+
+    The Total curve is bon_select(overall, overall, n) == bon_continuous(overall, n);
+    dimension curves may be NON-monotonic in n (the overall winner can change).
+    """
+    if overall_mat.shape != dim_mat.shape:
+        # Guard against silent NumPy broadcasting if the two matrices are
+        # misaligned (e.g. a prompt with a dim score but no overall score).
+        raise ValueError(
+            f"overall_mat {overall_mat.shape} and dim_mat {dim_mat.shape} "
+            "must share shape and (sample_id, seed_index) ordering"
+        )
+    if not 1 <= n <= overall_mat.shape[1]:
+        raise ValueError(f"n={n} out of range [1, {overall_mat.shape[1]}]")
+    sel = np.argmax(overall_mat[:, :n], axis=1)            # (n_prompts,)
+    picked = dim_mat[np.arange(dim_mat.shape[0]), sel]     # companion dim values
+    valid = ~np.isnan(picked)                             # winners lacking the dim
+    if not valid.any():
+        return float("nan")
+    return float(np.mean(picked[valid]))
+
+
 def pass_at_n(scores: np.ndarray, n: int, threshold: float = 1.0) -> float:
     """Binary: mean over prompts of (any of first n samples >= threshold)."""
     if not 1 <= n <= scores.shape[1]:
@@ -573,6 +605,129 @@ def _plot_spatial_geneval_breakdown(curves, out_path):
     plt.close(fig)
 
 
+QWEN_IMAGE_BENCH_DIMS = [
+    ("qwen-image-bench-quality", "Quality"),
+    ("qwen-image-bench-aesthetics", "Aesthetics"),
+    ("qwen-image-bench-alignment", "Alignment"),
+    ("qwen-image-bench-fidelity", "Real-world Fidelity"),
+    ("qwen-image-bench-creative", "Creative Generation"),
+]
+
+
+def _qib_aligned_dim_matrix(rows, key, n_max):
+    """Dim-score matrix on the SAME (sorted sample_id, seed_index) grid as the
+    overall matrix built by build_score_matrix(rows, "qwen-image-bench").
+
+    Cells where the dimension is absent are NaN (the judge can return all-N/A for
+    a dimension on a given image, so a prompt may carry the dim on some seeds but
+    not others — "ragged" coverage). bon_select excludes NaN winners, so this
+    must not raise on holes the way build_score_matrix does.
+    """
+    overall_seeds = defaultdict(set)   # sample_id -> set(seed_index) with overall
+    dim_vals = defaultdict(dict)       # sample_id -> {seed_index: dim_score}
+    for r in rows:
+        scores = r.get("scores") or {}
+        if "qwen-image-bench" not in scores:
+            continue
+        sid = r["sample_id"]
+        seed = r.get("seed_index", 0)
+        overall_seeds[sid].add(seed)
+        if key in scores:
+            dim_vals[sid][seed] = scores[key]
+
+    sample_ids = sorted(overall_seeds)
+    mat = np.full((len(sample_ids), n_max), np.nan, dtype=float)
+    for i, sid in enumerate(sample_ids):
+        for seed, val in dim_vals.get(sid, {}).items():
+            mat[i, seed] = val
+    return mat
+
+
+def _aggregate_qwen_image_bench(rows, bestofn_dir, plots_dir, csv_dir):
+    """Selection-based BoN for Qwen-Image-Bench.
+
+    Total curve = mean over prompts of max over first-n OVERALL scores. Each of
+    the 5 L1 dimension curves = mean over prompts (that cover the dim) of the
+    OVERALL-winner image's dimension value (bon_select). Emits 6 curve entries +
+    csv/png each + a breakdown plot (5 thin dim lines + 1 thick Total).
+    """
+    overall_mat = build_score_matrix(rows, "qwen-image-bench")
+    if overall_mat is None:
+        raise ValueError("No 'qwen-image-bench' (overall) scores found; run scoring first.")
+    n_max = overall_mat.shape[1]
+
+    total_curve = aggregate_curve(overall_mat, kind="continuous")
+    out = {
+        "qwen-image-bench": {
+            "kind": "continuous",
+            "n_max": n_max,
+            "num_prompts": overall_mat.shape[0],
+            "curve": total_curve,
+            "ceiling_lift": total_curve[n_max] - total_curve[1],
+            "aggregation": "Total = mean over prompts of max over first-n overall scores",
+        }
+    }
+    plot_curve(total_curve, "qwen-image-bench", "continuous", None,
+               os.path.join(plots_dir, "qwen-image-bench_curve_log.png"))
+    write_curve_csv(total_curve, os.path.join(csv_dir, "qwen-image-bench_curve.csv"))
+
+    dim_curves = {}
+    for key, label in QWEN_IMAGE_BENCH_DIMS:
+        # dim_mat is aligned to the full overall grid; NaN where a prompt's image
+        # has no score for this dimension. bon_select(overall_mat, dim_mat, n)
+        # picks each prompt's overall-winner among the first n seeds and reads
+        # that image's dim value, averaging over prompts whose winner has the dim.
+        dim_mat = _qib_aligned_dim_matrix(rows, key, n_max)
+        num_covering = int((~np.isnan(dim_mat)).any(axis=1).sum())
+        if num_covering == 0:
+            continue  # no prompt covers this dimension
+        curve = {n: bon_select(overall_mat, dim_mat, n) for n in range(1, n_max + 1)}
+        dim_curves[key] = curve
+        lift = curve[n_max] - curve[1]
+        out[key] = {
+            "kind": "continuous",
+            "n_max": n_max,
+            "num_prompts": num_covering,
+            "curve": curve,
+            "ceiling_lift": None if (lift != lift) else lift,  # NaN-safe (NaN != NaN)
+            "aggregation": f"{label}: overall-winner companion score (selection-based BoN)",
+        }
+        write_curve_csv(curve, os.path.join(csv_dir, f"{key}_curve.csv"))
+        plot_curve(curve, key, "continuous", None,
+                   os.path.join(plots_dir, f"{key}_curve_log.png"))
+
+    _plot_qwen_image_bench_breakdown(
+        total_curve, dim_curves,
+        os.path.join(plots_dir, "qwen-image-bench_breakdown_curve_log.png"))
+    return out
+
+
+def _plot_qwen_image_bench_breakdown(total_curve, dim_curves, out_path):
+    ns = sorted(total_curve.keys())
+    fig, ax = plt.subplots(figsize=(6, 4))
+    cmap = plt.get_cmap("tab10")
+    for i, (key, label) in enumerate(QWEN_IMAGE_BENCH_DIMS):
+        if key not in dim_curves:
+            continue
+        # Plot each dim curve over its own x-range; a dim's covering-prompt
+        # subset can have fewer seeds than the global overall matrix.
+        dim_ns = sorted(dim_curves[key].keys())
+        ys = [dim_curves[key][n] for n in dim_ns]
+        ax.plot(dim_ns, ys, marker="o", markersize=2.5, linewidth=1.2,
+                color=cmap(i), label=label, alpha=0.85)
+    ax.plot(ns, [total_curve[n] for n in ns], marker="o", markersize=4,
+            linewidth=2.4, color="black", label="Total (overall)")
+    ax.set_xscale("log", base=2)
+    ax.set_xlabel("N (samples per prompt)")
+    ax.set_ylabel("Best-of-N score (0-100)")
+    ax.set_title("Qwen-Image-Bench BoN: per-dimension + Total")
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(fontsize=8, loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def _aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir, metric_key="dpg-score"):
     """DPG-Bench: two headline numbers (ELLA official protocol).
 
@@ -726,9 +881,13 @@ def main(args):
     out = {}
     if any(k.startswith("spatial-geneval") for k in metrics):
         out.update(_aggregate_spatial_geneval(rows, bestofn_dir, plots_dir, csv_dir))
+    if "qwen-image-bench" in metrics:
+        out.update(_aggregate_qwen_image_bench(rows, bestofn_dir, plots_dir, csv_dir))
 
     for metric in metrics:
         if metric.startswith("spatial-geneval") or metric == "_spatial_geneval_correct":
+            continue
+        if metric == "qwen-image-bench" or metric.startswith("qwen-image-bench-"):
             continue
         if metric == "geneval":
             # GenEval has its own per-dimension + macro-avg-Overall path.
