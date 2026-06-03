@@ -98,6 +98,7 @@ _DATASET_LOADERS = {
     "aigi-detector":    ("mscoco_val_2014_1000prompts.json", _load_aigi),
     "anytext-en":       ("test.jsonl",            _load_jsonl),
     "anytext-zh":       ("test.jsonl",            _load_jsonl),
+    "qwen-image-bench": ("prompts.jsonl",         _load_jsonl),
 }
 
 
