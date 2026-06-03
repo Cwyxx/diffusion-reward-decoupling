@@ -137,7 +137,13 @@ def bon_select(overall_mat: np.ndarray, dim_mat: np.ndarray, n: int) -> float:
     score among the first n seeds, then read that winning image's `dim` value;
     mean over prompts.
 
-    overall_mat and dim_mat must share shape and column ordering (seed_index).
+    overall_mat and dim_mat share shape and column ordering (seed_index).
+    overall_mat must be dense (every scored image has an overall score); dim_mat
+    may contain NaN where the winning image has no score for that dimension (the
+    judge can return all-N/A for a dimension on a given image). Such prompts are
+    excluded from the mean at that n. Returns NaN if no prompt's n-winner has the
+    dimension.
+
     The Total curve is bon_select(overall, overall, n) == bon_continuous(overall, n);
     dimension curves may be NON-monotonic in n (the overall winner can change).
     """
@@ -152,7 +158,10 @@ def bon_select(overall_mat: np.ndarray, dim_mat: np.ndarray, n: int) -> float:
         raise ValueError(f"n={n} out of range [1, {overall_mat.shape[1]}]")
     sel = np.argmax(overall_mat[:, :n], axis=1)            # (n_prompts,)
     picked = dim_mat[np.arange(dim_mat.shape[0]), sel]     # companion dim values
-    return float(np.mean(picked))
+    valid = ~np.isnan(picked)                             # winners lacking the dim
+    if not valid.any():
+        return float("nan")
+    return float(np.mean(picked[valid]))
 
 
 def pass_at_n(scores: np.ndarray, n: int, threshold: float = 1.0) -> float:
@@ -605,6 +614,35 @@ QWEN_IMAGE_BENCH_DIMS = [
 ]
 
 
+def _qib_aligned_dim_matrix(rows, key, n_max):
+    """Dim-score matrix on the SAME (sorted sample_id, seed_index) grid as the
+    overall matrix built by build_score_matrix(rows, "qwen-image-bench").
+
+    Cells where the dimension is absent are NaN (the judge can return all-N/A for
+    a dimension on a given image, so a prompt may carry the dim on some seeds but
+    not others — "ragged" coverage). bon_select excludes NaN winners, so this
+    must not raise on holes the way build_score_matrix does.
+    """
+    overall_seeds = defaultdict(set)   # sample_id -> set(seed_index) with overall
+    dim_vals = defaultdict(dict)       # sample_id -> {seed_index: dim_score}
+    for r in rows:
+        scores = r.get("scores") or {}
+        if "qwen-image-bench" not in scores:
+            continue
+        sid = r["sample_id"]
+        seed = r.get("seed_index", 0)
+        overall_seeds[sid].add(seed)
+        if key in scores:
+            dim_vals[sid][seed] = scores[key]
+
+    sample_ids = sorted(overall_seeds)
+    mat = np.full((len(sample_ids), n_max), np.nan, dtype=float)
+    for i, sid in enumerate(sample_ids):
+        for seed, val in dim_vals.get(sid, {}).items():
+            mat[i, seed] = val
+    return mat
+
+
 def _aggregate_qwen_image_bench(rows, bestofn_dir, plots_dir, csv_dir):
     """Selection-based BoN for Qwen-Image-Bench.
 
@@ -635,24 +673,23 @@ def _aggregate_qwen_image_bench(rows, bestofn_dir, plots_dir, csv_dir):
 
     dim_curves = {}
     for key, label in QWEN_IMAGE_BENCH_DIMS:
-        sub = [r for r in rows if key in (r.get("scores") or {})]
-        if not sub:
-            continue
-        o_sub = build_score_matrix(sub, "qwen-image-bench")
-        if o_sub is None:
-            raise ValueError(
-                f"{key}: covering rows lack the 'qwen-image-bench' overall score; "
-                "re-run scoring before aggregating"
-            )
-        d_sub = build_score_matrix(sub, key)
-        curve = {n: bon_select(o_sub, d_sub, n) for n in range(1, d_sub.shape[1] + 1)}
+        # dim_mat is aligned to the full overall grid; NaN where a prompt's image
+        # has no score for this dimension. bon_select(overall_mat, dim_mat, n)
+        # picks each prompt's overall-winner among the first n seeds and reads
+        # that image's dim value, averaging over prompts whose winner has the dim.
+        dim_mat = _qib_aligned_dim_matrix(rows, key, n_max)
+        num_covering = int((~np.isnan(dim_mat)).any(axis=1).sum())
+        if num_covering == 0:
+            continue  # no prompt covers this dimension
+        curve = {n: bon_select(overall_mat, dim_mat, n) for n in range(1, n_max + 1)}
         dim_curves[key] = curve
+        lift = curve[n_max] - curve[1]
         out[key] = {
             "kind": "continuous",
-            "n_max": d_sub.shape[1],
-            "num_prompts": d_sub.shape[0],
+            "n_max": n_max,
+            "num_prompts": num_covering,
             "curve": curve,
-            "ceiling_lift": curve[d_sub.shape[1]] - curve[1],
+            "ceiling_lift": None if (lift != lift) else lift,  # NaN-safe (NaN != NaN)
             "aggregation": f"{label}: overall-winner companion score (selection-based BoN)",
         }
         write_curve_csv(curve, os.path.join(csv_dir, f"{key}_curve.csv"))

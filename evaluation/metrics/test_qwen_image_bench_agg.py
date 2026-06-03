@@ -59,3 +59,29 @@ def test_aggregate_only_averages_dim_over_covering_prompts(tmp_path):
     # alignment only prompt0 covers it: winner seed1 -> 60. mean over 1 prompt = 60.
     assert out["qwen-image-bench-alignment"]["curve"][2] == 60.0
     assert out["qwen-image-bench-alignment"]["num_prompts"] == 1
+
+
+def test_aggregate_handles_ragged_intra_prompt_dim_coverage(tmp_path):
+    # One prompt, 2 seeds. The judge scored quality on seed0 but returned all-N/A
+    # for quality on seed1 (so seed1 has overall but NO quality key). This ragged
+    # coverage must NOT abort aggregation; the dim curve excludes the NaN winner.
+    rows = [
+        _row(0, 0, {"qwen-image-bench": 40.0, "qwen-image-bench-quality": 60.0}),
+        _row(0, 1, {"qwen-image-bench": 80.0}),  # no quality on this image
+    ]
+    bestofn = tmp_path / "bestofn"
+    plots = bestofn / "plots"
+    csvd = bestofn / "csv"
+    for d in (plots, csvd):
+        os.makedirs(d, exist_ok=True)
+
+    out = agg._aggregate_qwen_image_bench(rows, str(bestofn), str(plots), str(csvd))
+
+    qcurve = out["qwen-image-bench-quality"]["curve"]
+    # n=1 -> winner seed0 (overall 40) -> quality 60.
+    assert qcurve[1] == 60.0
+    # n=2 -> winner seed1 (overall 80) which has NO quality -> excluded -> NaN.
+    assert np.isnan(qcurve[2])
+    assert out["qwen-image-bench-quality"]["num_prompts"] == 1
+    # Total is unaffected by ragged dim coverage.
+    assert out["qwen-image-bench"]["curve"][2] == 80.0
