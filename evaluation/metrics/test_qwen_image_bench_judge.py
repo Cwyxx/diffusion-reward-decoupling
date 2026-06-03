@@ -62,3 +62,25 @@ def test_scores_from_raw_unparseable_dim_skipped():
     assert overall is None
     assert dim_scores == {}
     assert parsed == {}
+
+
+def test_build_tasks_drops_l1_not_in_checklist():
+    # A prompt whose dims_en references an L1 dimension that upstream's
+    # DIM_TO_CHECKLIST doesn't know about must be silently dropped, not crash.
+    img = Image.new("RGB", (64, 64))
+    tasks = build_tasks("x", "MadeUpDim / Foo / Bar", img)
+    assert tasks == []
+
+
+def test_scores_from_raw_all_na_dim_parsed_but_excluded():
+    # A dim that parses fine but is entirely N/A yields level1_score None: it
+    # must be absent from dim_scores AND from overall, yet kept in parsed_by_dim.
+    quality_na = '{"Realism": {"Physical Logic": {"score": "N/A"}}}'
+    aesth_raw = '{"Composition": {"Composition": {"score": 2}}}'
+    overall, dim_scores, parsed = scores_from_raw(
+        {"Quality": quality_na, "Aesthetics": aesth_raw}
+    )
+    assert DIM_KEY["Quality"] not in dim_scores       # all-N/A -> excluded
+    assert dim_scores[DIM_KEY["Aesthetics"]] == 100.0
+    assert overall == 100.0                           # only Aesthetics counts
+    assert "Quality" in parsed                        # raw judgment still kept

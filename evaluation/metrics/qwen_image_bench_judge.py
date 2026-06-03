@@ -39,7 +39,12 @@ DIM_KEY = {
 
 
 def load_and_resize_image(path):
-    """Load RGB image; resize to 1024x1024 if any side > 1024 (matches judge.py)."""
+    """Load RGB image; resize to 1024x1024 if any side > 1024 (matches judge.py).
+
+    Note: the resize is a fixed 1024x1024 and does NOT preserve aspect ratio
+    (a 2048x512 image becomes 1024x1024). This is intentional parity with the
+    upstream judge engine's preprocessing — do not "fix" it to a thumbnail.
+    """
     img = Image.open(path)
     if img.mode != "RGB":
         img = img.convert("RGB")
