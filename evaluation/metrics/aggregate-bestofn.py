@@ -132,6 +132,22 @@ def bon_continuous(scores: np.ndarray, n: int) -> float:
     return float(np.mean(np.max(scores[:, :n], axis=1)))
 
 
+def bon_select(overall_mat: np.ndarray, dim_mat: np.ndarray, n: int) -> float:
+    """Selection-based BoN: per prompt pick the image with the highest OVERALL
+    score among the first n seeds, then read that winning image's `dim` value;
+    mean over prompts.
+
+    overall_mat and dim_mat must share shape and column ordering (seed_index).
+    The Total curve is bon_select(overall, overall, n) == bon_continuous(overall, n);
+    dimension curves may be NON-monotonic in n (the overall winner can change).
+    """
+    if not 1 <= n <= overall_mat.shape[1]:
+        raise ValueError(f"n={n} out of range [1, {overall_mat.shape[1]}]")
+    sel = np.argmax(overall_mat[:, :n], axis=1)            # (n_prompts,)
+    picked = dim_mat[np.arange(dim_mat.shape[0]), sel]     # companion dim values
+    return float(np.mean(picked))
+
+
 def pass_at_n(scores: np.ndarray, n: int, threshold: float = 1.0) -> float:
     """Binary: mean over prompts of (any of first n samples >= threshold)."""
     if not 1 <= n <= scores.shape[1]:
@@ -573,6 +589,93 @@ def _plot_spatial_geneval_breakdown(curves, out_path):
     plt.close(fig)
 
 
+QWEN_IMAGE_BENCH_DIMS = [
+    ("qwen-image-bench-quality", "Quality"),
+    ("qwen-image-bench-aesthetics", "Aesthetics"),
+    ("qwen-image-bench-alignment", "Alignment"),
+    ("qwen-image-bench-fidelity", "Real-world Fidelity"),
+    ("qwen-image-bench-creative", "Creative Generation"),
+]
+
+
+def _aggregate_qwen_image_bench(rows, bestofn_dir, plots_dir, csv_dir):
+    """Selection-based BoN for Qwen-Image-Bench.
+
+    Total curve = mean over prompts of max over first-n OVERALL scores. Each of
+    the 5 L1 dimension curves = mean over prompts (that cover the dim) of the
+    OVERALL-winner image's dimension value (bon_select). Emits 6 curve entries +
+    csv/png each + a breakdown plot (5 thin dim lines + 1 thick Total).
+    """
+    overall_mat = build_score_matrix(rows, "qwen-image-bench")
+    if overall_mat is None:
+        raise ValueError("No 'qwen-image-bench' (overall) scores found; run scoring first.")
+    n_max = overall_mat.shape[1]
+
+    total_curve = aggregate_curve(overall_mat, kind="continuous")
+    out = {
+        "qwen-image-bench": {
+            "kind": "continuous",
+            "n_max": n_max,
+            "num_prompts": overall_mat.shape[0],
+            "curve": total_curve,
+            "ceiling_lift": total_curve[n_max] - total_curve[1],
+            "aggregation": "Total = mean over prompts of max over first-n overall scores",
+        }
+    }
+    plot_curve(total_curve, "qwen-image-bench", "continuous", None,
+               os.path.join(plots_dir, "qwen-image-bench_curve_log.png"))
+    write_curve_csv(total_curve, os.path.join(csv_dir, "qwen-image-bench_curve.csv"))
+
+    dim_curves = {}
+    for key, label in QWEN_IMAGE_BENCH_DIMS:
+        sub = [r for r in rows if key in (r.get("scores") or {})]
+        if not sub:
+            continue
+        o_sub = build_score_matrix(sub, "qwen-image-bench")
+        d_sub = build_score_matrix(sub, key)
+        curve = {n: bon_select(o_sub, d_sub, n) for n in range(1, d_sub.shape[1] + 1)}
+        dim_curves[key] = curve
+        out[key] = {
+            "kind": "continuous",
+            "n_max": d_sub.shape[1],
+            "num_prompts": d_sub.shape[0],
+            "curve": curve,
+            "ceiling_lift": curve[d_sub.shape[1]] - curve[1],
+            "aggregation": f"{label}: overall-winner companion score (selection-based BoN)",
+        }
+        write_curve_csv(curve, os.path.join(csv_dir, f"{key}_curve.csv"))
+        plot_curve(curve, key, "continuous", None,
+                   os.path.join(plots_dir, f"{key}_curve_log.png"))
+
+    _plot_qwen_image_bench_breakdown(
+        total_curve, dim_curves,
+        os.path.join(plots_dir, "qwen-image-bench_breakdown_curve_log.png"))
+    return out
+
+
+def _plot_qwen_image_bench_breakdown(total_curve, dim_curves, out_path):
+    ns = sorted(total_curve.keys())
+    fig, ax = plt.subplots(figsize=(6, 4))
+    cmap = plt.get_cmap("tab10")
+    for i, (key, label) in enumerate(QWEN_IMAGE_BENCH_DIMS):
+        if key not in dim_curves:
+            continue
+        ys = [dim_curves[key][n] for n in ns]
+        ax.plot(ns, ys, marker="o", markersize=2.5, linewidth=1.2,
+                color=cmap(i), label=label, alpha=0.85)
+    ax.plot(ns, [total_curve[n] for n in ns], marker="o", markersize=4,
+            linewidth=2.4, color="black", label="Total (overall)")
+    ax.set_xscale("log", base=2)
+    ax.set_xlabel("N (samples per prompt)")
+    ax.set_ylabel("Best-of-N score (0-100)")
+    ax.set_title("Qwen-Image-Bench BoN: per-dimension + Total")
+    ax.grid(True, which="both", alpha=0.3)
+    ax.legend(fontsize=8, loc="best")
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150)
+    plt.close(fig)
+
+
 def _aggregate_dpg(rows, bestofn_dir, plots_dir, csv_dir, metric_key="dpg-score"):
     """DPG-Bench: two headline numbers (ELLA official protocol).
 
@@ -726,9 +829,13 @@ def main(args):
     out = {}
     if any(k.startswith("spatial-geneval") for k in metrics):
         out.update(_aggregate_spatial_geneval(rows, bestofn_dir, plots_dir, csv_dir))
+    if "qwen-image-bench" in metrics:
+        out.update(_aggregate_qwen_image_bench(rows, bestofn_dir, plots_dir, csv_dir))
 
     for metric in metrics:
         if metric.startswith("spatial-geneval") or metric == "_spatial_geneval_correct":
+            continue
+        if metric == "qwen-image-bench" or metric.startswith("qwen-image-bench-"):
             continue
         if metric == "geneval":
             # GenEval has its own per-dimension + macro-avg-Overall path.
