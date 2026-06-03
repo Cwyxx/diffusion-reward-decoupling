@@ -990,7 +990,11 @@ def _score_mhsc_in_place(todo_rows):
 # write overall(Total) + 5 L1 dimension scores. The 27B model shards across all
 # visible GPUs (device_map="auto"), max_batch_size=1. Raw per-question judgments
 # are appended to qwen_image_bench_judge_outputs.jsonl, which doubles as a
-# judgment cache so a crash-resumed run reuses prior judge calls.
+# judgment cache so a crash-resumed run reuses prior judge calls (the cache is
+# loaded before the loop, so the same (sample_id, seed_index) is never appended
+# twice). Scores are re-derived from the cached raw text each run, so changing
+# the parsing logic takes effect on re-run without re-calling the 27B model.
+# Set QIB_JUDGE_MODEL to point at a local checkpoint (default "Qwen/Qwen-Image-Bench").
 
 _QIB_RAW_FILENAME = "qwen_image_bench_judge_outputs.jsonl"
 
@@ -1053,7 +1057,6 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
 
         if key in cache:
             raw_by_dim = cache[key]
-            parsed_by_dim = None  # already on disk; don't re-append
         else:
             if judge is None:
                 from qwen_image_bench_engine import QwenImageBenchJudge  # noqa: E402
@@ -1064,13 +1067,21 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
             outputs = judge.generate_batch([t for _, t in tasks])
             raw_by_dim = {l1: out for (l1, _), out in zip(tasks, outputs)}
 
-        overall, dim_scores, parsed_by_dim_new = scores_from_raw(raw_by_dim)
+        overall, dim_scores, parsed_by_dim = scores_from_raw(raw_by_dim)
         if key not in cache:
-            _qib_append_raw(raw_path, r, raw_by_dim, parsed_by_dim_new)
+            _qib_append_raw(raw_path, r, raw_by_dim, parsed_by_dim)
 
+        if overall is None:
+            # Every dimension was unparseable / all-N-A: leave the row UNSCORED
+            # so a resume re-lists it (cheap — the raw judgments are cached, only
+            # re-parsing runs, no 27B call). Writing None would make
+            # _has_metric_score treat it as done and hide it from re-runs forever.
+            continue
         r["scores"]["qwen-image-bench"] = overall
         for suffix, val in dim_scores.items():
             r["scores"][f"qwen-image-bench-{suffix}"] = val
+
+    torch.cuda.empty_cache()
 
 
 # ------------------------- DallEval social-bias judges -------------------------
