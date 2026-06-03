@@ -141,6 +141,13 @@ def bon_select(overall_mat: np.ndarray, dim_mat: np.ndarray, n: int) -> float:
     The Total curve is bon_select(overall, overall, n) == bon_continuous(overall, n);
     dimension curves may be NON-monotonic in n (the overall winner can change).
     """
+    if overall_mat.shape != dim_mat.shape:
+        # Guard against silent NumPy broadcasting if the two matrices are
+        # misaligned (e.g. a prompt with a dim score but no overall score).
+        raise ValueError(
+            f"overall_mat {overall_mat.shape} and dim_mat {dim_mat.shape} "
+            "must share shape and (sample_id, seed_index) ordering"
+        )
     if not 1 <= n <= overall_mat.shape[1]:
         raise ValueError(f"n={n} out of range [1, {overall_mat.shape[1]}]")
     sel = np.argmax(overall_mat[:, :n], axis=1)            # (n_prompts,)
@@ -632,6 +639,11 @@ def _aggregate_qwen_image_bench(rows, bestofn_dir, plots_dir, csv_dir):
         if not sub:
             continue
         o_sub = build_score_matrix(sub, "qwen-image-bench")
+        if o_sub is None:
+            raise ValueError(
+                f"{key}: covering rows lack the 'qwen-image-bench' overall score; "
+                "re-run scoring before aggregating"
+            )
         d_sub = build_score_matrix(sub, key)
         curve = {n: bon_select(o_sub, d_sub, n) for n in range(1, d_sub.shape[1] + 1)}
         dim_curves[key] = curve
@@ -660,8 +672,11 @@ def _plot_qwen_image_bench_breakdown(total_curve, dim_curves, out_path):
     for i, (key, label) in enumerate(QWEN_IMAGE_BENCH_DIMS):
         if key not in dim_curves:
             continue
-        ys = [dim_curves[key][n] for n in ns]
-        ax.plot(ns, ys, marker="o", markersize=2.5, linewidth=1.2,
+        # Plot each dim curve over its own x-range; a dim's covering-prompt
+        # subset can have fewer seeds than the global overall matrix.
+        dim_ns = sorted(dim_curves[key].keys())
+        ys = [dim_curves[key][n] for n in dim_ns]
+        ax.plot(dim_ns, ys, marker="o", markersize=2.5, linewidth=1.2,
                 color=cmap(i), label=label, alpha=0.85)
     ax.plot(ns, [total_curve[n] for n in ns], marker="o", markersize=4,
             linewidth=2.4, color="black", label="Total (overall)")
