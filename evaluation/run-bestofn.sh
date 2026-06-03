@@ -39,7 +39,7 @@ export TOKENIZERS_PARALLELISM=False
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
 method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3, diffusionnft-sd3)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica, aigi-detector, anytext-en, anytext-zh)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica, aigi-detector, anytext-en, anytext-zh, qwen-image-bench)}
 n_max=${4:?n_max (e.g. 32)}
 
 # ---- Family-aware defaults (derived from method suffix) ----
@@ -94,6 +94,9 @@ case "${dataset}" in
     # then order-independent match against the GT text lines -> Sen.ACC + NED (anytext-ocr).
     # (GT polygons are NOT used as crop locations: a base T2I model isn't position-controlled.)
     anytext-en|anytext-zh) metric_list=(anytext-ocr) ;;
+    # Qwen-Image-Bench: 1000 English prompts (prompt_en). Scored by the 27B
+    # Q-Judger -> per-image overall(Total) + 5 L1 dims; selection-based BoN.
+    qwen-image-bench) metric_list=(qwen-image-bench) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -119,6 +122,8 @@ declare -A metric_env=(
     # DuGuang OCR is ModelScope-based; reuse the dpg-bench env (already has modelscope
     # for dpg-score-mplug) instead of a separate anytext env.
     [anytext-ocr]=dpg-bench
+    # 27B judge needs ms-swift; isolate from the transformers==4.40 main env.
+    [qwen-image-bench]=qwen-image-bench
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -166,13 +171,23 @@ if [[ "${dataset}" == "wise" || "${dataset}" == "spatial_geneval" ]]; then
     fi
 fi
 
+# Qwen-Image-Bench judge: 27B Q-Judger via ms-swift, sharded across all --gpus
+# (device_map=auto). Override QIB_JUDGE_MODEL to point at a local checkpoint.
+if [[ "${dataset}" == "qwen-image-bench" ]]; then
+    : "${QIB_JUDGE_MODEL:=Qwen/Qwen-Image-Bench}"
+    export QIB_JUDGE_MODEL
+    echo "Qwen-Image-Bench judge model: ${QIB_JUDGE_MODEL}"
+fi
+
 # ---- Stage 2: Score (per-metric conda env) ----
 for metric in "${metric_list[@]}"; do
     # BLIP-2 (FlanT5-XXL) gender/attribute scorers shard across all --gpus
     # (24 GB cards can't hold XXL alone); everything else uses one GPU. Skintone
     # uses TRUST/face-alignment subprocesses, not BLIP-2, so it stays single-GPU.
+    # qwen-image-bench: the 27B Q-Judger must shard across all --gpus
+    # (device_map=auto); a single 3090 can't hold it.
     case "${metric}" in
-        dalleval-bias-gender|dalleval-bias-attribute) score_cuda="${gpus}" ;;
+        dalleval-bias-gender|dalleval-bias-attribute|qwen-image-bench) score_cuda="${gpus}" ;;
         *)                                            score_cuda="${score_gpu}" ;;
     esac
     echo "--------------------------------------------"
