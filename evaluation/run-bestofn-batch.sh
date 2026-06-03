@@ -13,7 +13,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 gpus="${1:-0,1,2,3,4,5,6,7}"
 n_max="${2:-32}"
 
-methods=(base-sd3 flowgrpo-pickscore-sd3 grpo-guard-sd3 diffusion-dpo-sd3 realalign-sd3 diffusionnft-sd3)
+methods=(base-sd3 flowgrpo-pickscore-sd3 grpo-guard-sd3 diffusion-dpo-sd3 realalign-sd3 diffusionnft-sd3 civitaialign-sd3)
 # AnyText-Benchmark text rendering: generate-only for now (OCR scoring wired up next step).
 datasets=(anytext-en anytext-zh)
 

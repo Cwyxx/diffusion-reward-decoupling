@@ -97,6 +97,10 @@ REGISTRY: Dict[str, CheckpointRecipe] = {
         method="diffusionnft-sd3", base_model_id=SD35M, load_kind="peft_lora",
         repo_id=f"{SD35M_LORA_ROOT}/DiffusionNFT",
     ),
+    "civitaialign-sd3": CheckpointRecipe(
+        method="civitaialign-sd3", base_model_id=SD35M, load_kind="peft_lora",
+        repo_id=f"{SD35M_LORA_ROOT}/CivitaiAlign",
+    ),
 }
 
 
