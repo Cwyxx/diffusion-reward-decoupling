@@ -3,11 +3,15 @@
 
 """Paper-style radar chart for the 8 SD-3.5-M evaluation axes.
 
-Read-only plotter: it loads the two collector JSONs, takes their values exactly
-as stored (every axis is already on a "higher = better" 0..1 scale — the
-Social-Bias axis is flipped to a bias-control score inside
-collect-mean-of-n-metrics.py, not here), and draws a circular radar with a
-decorative two-tier outer ring:
+Plotter: it loads the two collector JSONs (every axis is already on a
+"higher = better" scale — the Social-Bias axis is flipped to a bias-control
+score inside collect-mean-of-n-metrics.py), then **min-max normalizes each axis
+across the 6 methods** so every spoke spans 0..1 and the per-method spread on an
+axis is fully visible regardless of that metric's native range. The radial
+values are therefore relative (0 = worst method on that axis, 1 = best), not raw
+scores — do not read absolute numbers off the rings, and do not compare two
+charts axis-for-axis. It draws a circular radar with a decorative two-tier outer
+ring:
 
   * an inner ring of light per-metric colour sectors (one wedge per axis), and
   * an outer ring split into two big background regions that group the 8 axes
@@ -139,10 +143,33 @@ def _at_n(metric_block, n):
     return np.nan if v is None else float(v)
 
 
+def normalize_minmax(data):
+    """Min-max scale each of the 8 axes across the methods, in place-safe copy.
+
+    For every axis, the 6 method values are linearly mapped so the smallest -> 0
+    and the largest -> 1; NaNs are ignored. If every method ties on an axis (zero
+    range) the axis is set to 0.5 (no information to spread). Returns a new dict.
+    """
+    methods = list(data.keys())
+    mat = np.array([data[m] for m in methods], dtype=float)  # (n_methods, 8)
+    out = mat.copy()
+    for j in range(mat.shape[1]):
+        col = mat[:, j]
+        if np.all(np.isnan(col)):
+            continue
+        lo, hi = np.nanmin(col), np.nanmax(col)
+        if hi - lo < 1e-12:
+            out[:, j] = np.where(np.isnan(col), np.nan, 0.5)
+        else:
+            out[:, j] = (col - lo) / (hi - lo)
+    return {m: out[i].tolist() for i, m in enumerate(methods)}
+
+
 def load_from_json(max_json, mean_json, n, warnings):
     """Assemble {method: [8 values]} from the two collector JSONs at N=n.
 
-    Values are taken verbatim — no rescaling or inversion happens here.
+    Raw values are read here; per-axis min-max normalization is applied later in
+    main() so it covers both the JSON path and the demo path uniformly.
     """
     data = {m: [np.nan] * 8 for m in METHODS}
 
@@ -299,11 +326,14 @@ def main(args):
         print("[data] no --max_json/--mean_json given; using built-in demo data.")
         data = _demo_data()
 
+    # Per-axis min-max normalization across methods (relative ranking view).
+    data = normalize_minmax(data)
+
     os.makedirs(os.path.dirname(os.path.abspath(args.out)) or ".", exist_ok=True)
     if args.title:
         title = args.title
     elif args.max_json or args.mean_json:
-        title = f"SD-3.5-M  (N = {args.n})"
+        title = f"SD-3.5-M  (N = {args.n}, per-axis min-max normalized)"
     else:
         title = None
     plot_radar(data, args.out, size=args.size, dpi=args.dpi, title=title)
