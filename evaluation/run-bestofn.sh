@@ -122,8 +122,7 @@ declare -A metric_env=(
     # DuGuang OCR is ModelScope-based; reuse the dpg-bench env (already has modelscope
     # for dpg-score-mplug) instead of a separate anytext env.
     [anytext-ocr]=dpg-bench
-    # 27B judge needs ms-swift; isolate from the transformers==4.40 main env.
-    [qwen-image-bench]=qwen-image-bench
+    [qwen-image-bench]=visualquality
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
