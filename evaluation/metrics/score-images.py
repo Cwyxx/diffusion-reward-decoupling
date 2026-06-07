@@ -987,14 +987,16 @@ def _score_mhsc_in_place(todo_rows):
 # ------------------------- Qwen-Image-Bench 27B Q-Judger -------------------------
 # Per image: for each L1 dimension the prompt covers (metadata.dims_en), run the
 # fine-tuned 27B judge over its checklist, parse 0/1/2/N-A -> L3/L2/L1 scores, and
-# write overall(Total) + 5 L1 dimension scores. The 27B model shards across all
-# visible GPUs (device_map="auto"), max_batch_size=1. Raw per-question judgments
+# write overall(Total) + 5 L1 dimension scores. The judge runs on a separately
+# launched OpenAI-compatible vLLM server (vllm serve Qwen/Qwen-Image-Bench); this
+# process is just an HTTP client and uses no GPU itself. Raw per-question judgments
 # are appended to qwen_image_bench_judge_outputs.jsonl, which doubles as a
 # judgment cache so a crash-resumed run reuses prior judge calls (the cache is
 # loaded before the loop, so the same (sample_id, seed_index) is never appended
 # twice). Scores are re-derived from the cached raw text each run, so changing
 # the parsing logic takes effect on re-run without re-calling the 27B model.
-# Set QIB_JUDGE_MODEL to point at a local checkpoint (default "Qwen/Qwen-Image-Bench").
+# Configure the server endpoint via QIB_VLLM_URL (default http://localhost:8000/v1),
+# QIB_VLLM_MODEL (default "Qwen-Image-Bench"), QIB_VLLM_CONCURRENCY (default 8).
 
 _QIB_RAW_FILENAME = "qwen_image_bench_judge_outputs.jsonl"
 
@@ -1042,10 +1044,11 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
 
     raw_path = os.path.join(output_dir, _QIB_RAW_FILENAME)
     cache = _qib_load_raw_cache(raw_path)
-    model_path = os.environ.get("QIB_JUDGE_MODEL", "Qwen/Qwen-Image-Bench")
+    vllm_url = os.environ.get("QIB_VLLM_URL", "http://localhost:8000/v1")
+    vllm_model = os.environ.get("QIB_VLLM_MODEL", "Qwen-Image-Bench")
     max_new_tokens = int(os.environ.get("QIB_MAX_NEW_TOKENS", "4096"))
-    print(f"[qwen-image-bench] {n} images to score; model={model_path}; "
-          f"raw cache hits available={len(cache)}")
+    print(f"[qwen-image-bench] {n} images to score; vllm={vllm_url} "
+          f"model={vllm_model}; raw cache hits available={len(cache)}")
 
     judge = None  # lazy: only construct the 27B engine if a row misses the cache
     for r in tqdm(todo_rows, desc="qwen-image-bench"):
@@ -1061,11 +1064,17 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
             raw_by_dim = cache[key]
         else:
             if judge is None:
-                from evaluation.benchmarks.QwenImageBench.qwen_image_bench_engine import (
+                # Judge runs against an OpenAI-compatible vLLM server
+                # (vllm serve Qwen/Qwen-Image-Bench): real tensor-parallel +
+                # paged-attention batching, all GPUs active. Thinking is left to
+                # the server's chat-template default (no per-request override).
+                from evaluation.benchmarks.QwenImageBench.qwen_image_bench_engine_vllm import (
                     QwenImageBenchJudge,
                 )  # noqa: E402
-                judge = QwenImageBenchJudge(model_path=model_path, max_batch_size=1,
-                                            max_new_tokens=max_new_tokens)
+                judge = QwenImageBenchJudge(
+                    model_path=vllm_model, base_url=vllm_url,
+                    max_batch_size=int(os.environ.get("QIB_VLLM_CONCURRENCY", "8")),
+                    max_new_tokens=max_new_tokens)
             img = load_and_resize_image(r["image_path"])
             tasks = build_tasks(r["prompt"], meta["dims_en"], img)
             outputs = judge.generate_batch([t for _, t in tasks])

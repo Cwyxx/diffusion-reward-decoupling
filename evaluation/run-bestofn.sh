@@ -170,12 +170,15 @@ if [[ "${dataset}" == "wise" || "${dataset}" == "spatial_geneval" ]]; then
     fi
 fi
 
-# Qwen-Image-Bench judge: 27B Q-Judger via ms-swift, sharded across all --gpus
-# (device_map=auto). Override QIB_JUDGE_MODEL to point at a local checkpoint.
+# Qwen-Image-Bench judge: the 27B Q-Judger runs on a SEPARATELY launched
+# OpenAI-compatible vLLM server (vllm serve Qwen/Qwen-Image-Bench --served-model-name
+# Qwen-Image-Bench ...). This script is only an HTTP client; start the server first.
 if [[ "${dataset}" == "qwen-image-bench" ]]; then
-    : "${QIB_JUDGE_MODEL:=Qwen/Qwen-Image-Bench}"
-    export QIB_JUDGE_MODEL
-    echo "Qwen-Image-Bench judge model: ${QIB_JUDGE_MODEL}"
+    : "${QIB_VLLM_URL:=http://localhost:8000/v1}"
+    : "${QIB_VLLM_MODEL:=Qwen-Image-Bench}"
+    : "${QIB_VLLM_CONCURRENCY:=8}"
+    export QIB_VLLM_URL QIB_VLLM_MODEL QIB_VLLM_CONCURRENCY
+    echo "Qwen-Image-Bench judge: vLLM server ${QIB_VLLM_URL} (model ${QIB_VLLM_MODEL})"
 fi
 
 # ---- Stage 2: Score (per-metric conda env) ----
@@ -183,10 +186,10 @@ for metric in "${metric_list[@]}"; do
     # BLIP-2 (FlanT5-XXL) gender/attribute scorers shard across all --gpus
     # (24 GB cards can't hold XXL alone); everything else uses one GPU. Skintone
     # uses TRUST/face-alignment subprocesses, not BLIP-2, so it stays single-GPU.
-    # qwen-image-bench: the 27B Q-Judger must shard across all --gpus
-    # (device_map=auto); a single 3090 can't hold it.
+    # qwen-image-bench scores via an external vLLM server (HTTP client only), so
+    # it needs no local GPU; it stays on the single score_gpu like the default.
     case "${metric}" in
-        dalleval-bias-gender|dalleval-bias-attribute|qwen-image-bench) score_cuda="${gpus}" ;;
+        dalleval-bias-gender|dalleval-bias-attribute) score_cuda="${gpus}" ;;
         *)                                            score_cuda="${score_gpu}" ;;
     esac
     echo "--------------------------------------------"

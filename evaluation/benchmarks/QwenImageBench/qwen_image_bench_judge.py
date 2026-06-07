@@ -1,4 +1,4 @@
-"""Reusable Qwen-Image-Bench judging logic, decoupled from the ms-swift engine.
+"""Reusable Qwen-Image-Bench judging logic, decoupled from the inference engine.
 
 Builds the per-L1-dimension checklist inference tasks and turns raw judge text
 into a per-image overall score + 5 L1 dimension scores. Imports only the
