@@ -1032,7 +1032,9 @@ def _qib_append_raw(raw_path, row, raw_by_dim, parsed_by_dim):
 
 
 def _score_qwen_image_bench_in_place(todo_rows, output_dir):
-    from qwen_image_bench_judge import build_tasks, load_and_resize_image, scores_from_raw
+    from evaluation.benchmarks.QwenImageBench.qwen_image_bench_judge import (
+        build_tasks, load_and_resize_image, scores_from_raw,
+    )
 
     n = len(todo_rows)
     if n == 0:
@@ -1059,7 +1061,9 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
             raw_by_dim = cache[key]
         else:
             if judge is None:
-                from qwen_image_bench_engine import QwenImageBenchJudge  # noqa: E402
+                from evaluation.benchmarks.QwenImageBench.qwen_image_bench_engine import (
+                    QwenImageBenchJudge,
+                )  # noqa: E402
                 judge = QwenImageBenchJudge(model_path=model_path, max_batch_size=1,
                                             max_new_tokens=max_new_tokens)
             img = load_and_resize_image(r["image_path"])
