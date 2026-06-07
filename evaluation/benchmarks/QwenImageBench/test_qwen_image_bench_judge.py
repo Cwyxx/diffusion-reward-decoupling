@@ -3,8 +3,9 @@ import sys
 
 from PIL import Image
 
-sys.path.insert(0, os.path.dirname(__file__))
-from qwen_image_bench_judge import (
+# repo root on sys.path so the benchmark package imports resolve
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..")))
+from evaluation.benchmarks.QwenImageBench.qwen_image_bench_judge import (
     DIM_KEY,
     build_tasks,
     load_and_resize_image,

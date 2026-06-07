@@ -2,27 +2,20 @@
 
 Builds the per-L1-dimension checklist inference tasks and turns raw judge text
 into a per-image overall score + 5 L1 dimension scores. Imports only the
-checklist/score helpers from flow_grpo/Qwen-Image-Bench (no swift dependency),
+checklist/score helpers vendored alongside this module (checklists.py,
+score_utils.py — copied from upstream Qwen-Image-Bench; no swift dependency),
 so it is unit-testable without the 27B model. The judge engine is injected by
 the caller (score-images.py).
 """
-import os
-import sys
-
 from PIL import Image
 
-_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-_QIB_DIR = os.path.join(_REPO_ROOT, "flow_grpo", "Qwen-Image-Bench")
-if _QIB_DIR not in sys.path:
-    sys.path.insert(0, _QIB_DIR)
-
-from checklists import (  # noqa: E402
+from .checklists import (
     DIM_TO_CHECKLIST,
     SYSTEM_PROMPT,
     USER_PROMPT_TEMPLATE,
     parse_dims_by_level1,
 )
-from score_utils import (  # noqa: E402
+from .score_utils import (
     compute_dimension_score,
     extract_json_from_response,
     fix_score_json,

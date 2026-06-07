@@ -3,7 +3,9 @@ import os
 
 import numpy as np
 
-_AGG = os.path.join(os.path.dirname(__file__), "aggregate-bestofn.py")
+_AGG = os.path.join(
+    os.path.dirname(__file__), "..", "..", "metrics", "aggregate-bestofn.py"
+)
 _spec = importlib.util.spec_from_file_location("agg_bestofn", _AGG)
 agg = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(agg)
