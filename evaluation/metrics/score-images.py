@@ -1047,52 +1047,73 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
     vllm_url = os.environ.get("QIB_VLLM_URL", "http://localhost:8000/v1")
     vllm_model = os.environ.get("QIB_VLLM_MODEL", "Qwen-Image-Bench")
     max_new_tokens = int(os.environ.get("QIB_MAX_NEW_TOKENS", "4096"))
+    concurrency = int(os.environ.get("QIB_VLLM_CONCURRENCY", "8"))
     print(f"[qwen-image-bench] {n} images to score; vllm={vllm_url} "
-          f"model={vllm_model}; raw cache hits available={len(cache)}")
+          f"model={vllm_model}; concurrency={concurrency}; "
+          f"raw cache hits available={len(cache)}")
 
-    judge = None  # lazy: only construct the 27B engine if a row misses the cache
-    for r in tqdm(todo_rows, desc="qwen-image-bench"):
-        meta = r.get("metadata") or {}
-        if "dims_en" not in meta:
+    # Fail fast with a clear error before any server call.
+    for r in todo_rows:
+        if "dims_en" not in (r.get("metadata") or {}):
             raise KeyError(
                 f"qwen-image-bench needs metadata.dims_en; row for "
-                f"{r['image_path']} has metadata keys {sorted(meta.keys())}"
+                f"{r['image_path']} has metadata keys "
+                f"{sorted((r.get('metadata') or {}).keys())}"
             )
-        key = (r["sample_id"], r.get("seed_index", 0))
 
-        if key in cache:
-            raw_by_dim = cache[key]
-        else:
-            if judge is None:
-                # Judge runs against an OpenAI-compatible vLLM server
-                # (vllm serve Qwen/Qwen-Image-Bench): real tensor-parallel +
-                # paged-attention batching, all GPUs active. Thinking is left to
-                # the server's chat-template default (no per-request override).
-                from evaluation.benchmarks.QwenImageBench.qwen_image_bench_engine_vllm import (
-                    QwenImageBenchJudge,
-                )  # noqa: E402
-                judge = QwenImageBenchJudge(
-                    model_path=vllm_model, base_url=vllm_url,
-                    max_batch_size=int(os.environ.get("QIB_VLLM_CONCURRENCY", "8")),
-                    max_new_tokens=max_new_tokens)
-            img = load_and_resize_image(r["image_path"])
-            tasks = build_tasks(r["prompt"], meta["dims_en"], img)
-            outputs = judge.generate_batch([t for _, t in tasks])
-            raw_by_dim = {l1: out for (l1, _), out in zip(tasks, outputs)}
-
+    def _write_scores(r, raw_by_dim):
         overall, dim_scores, parsed_by_dim = scores_from_raw(raw_by_dim)
-        if key not in cache:
-            _qib_append_raw(raw_path, r, raw_by_dim, parsed_by_dim)
+        if overall is not None:
+            r["scores"]["qwen-image-bench"] = overall
+            for suffix, val in dim_scores.items():
+                r["scores"][f"qwen-image-bench-{suffix}"] = val
+        # overall is None (every dim unparseable / all-N-A): leave the row UNSCORED
+        # so a resume re-lists it (cheap — raw is cached, only re-parsing runs, no
+        # 27B call). Writing None would make _has_metric_score hide it forever.
+        return overall, parsed_by_dim
 
-        if overall is None:
-            # Every dimension was unparseable / all-N-A: leave the row UNSCORED
-            # so a resume re-lists it (cheap — the raw judgments are cached, only
-            # re-parsing runs, no 27B call). Writing None would make
-            # _has_metric_score treat it as done and hide it from re-runs forever.
-            continue
-        r["scores"]["qwen-image-bench"] = overall
-        for suffix, val in dim_scores.items():
-            r["scores"][f"qwen-image-bench-{suffix}"] = val
+    # Cached rows need no server call: re-derive scores from the cached raw text.
+    uncached = []
+    for r in todo_rows:
+        key = (r["sample_id"], r.get("seed_index", 0))
+        if key in cache:
+            _write_scores(r, cache[key])
+        else:
+            uncached.append(r)
+
+    if uncached:
+        from evaluation.benchmarks.QwenImageBench.qwen_image_bench_engine_vllm import (
+            QwenImageBenchJudge,
+        )  # noqa: E402
+        # Cross-image batching: scoring one image at a time leaves the server's
+        # max-num-seqs slots mostly idle (each image is only <=5 requests). Instead
+        # flatten every image's per-dimension tasks across a chunk and fire them all
+        # concurrently so the vLLM server stays saturated. Chunk size is in IMAGES,
+        # sized to comfortably exceed the client concurrency in tasks while bounding
+        # how many images are held in memory at once.
+        judge = QwenImageBenchJudge(model_path=vllm_model, base_url=vllm_url,
+                                    max_batch_size=concurrency,
+                                    max_new_tokens=max_new_tokens)
+        chunk_imgs = max(8, concurrency)
+        with tqdm(total=len(uncached), desc="qwen-image-bench") as pbar:
+            for i in range(0, len(uncached), chunk_imgs):
+                chunk = uncached[i:i + chunk_imgs]
+                items, owner = [], []          # owner[j] = (row, l1_dim) for items[j]
+                raw_by_row = {id(r): {} for r in chunk}
+                for r in chunk:
+                    img = load_and_resize_image(r["image_path"])
+                    dims_en = (r.get("metadata") or {})["dims_en"]
+                    for l1, t in build_tasks(r["prompt"], dims_en, img):
+                        items.append(t)
+                        owner.append((r, l1))
+                outputs = judge.generate_batch(items)
+                for (r, l1), out in zip(owner, outputs):
+                    raw_by_row[id(r)][l1] = out
+                for r in chunk:
+                    raw_by_dim = raw_by_row[id(r)]
+                    _, parsed_by_dim = _write_scores(r, raw_by_dim)
+                    _qib_append_raw(raw_path, r, raw_by_dim, parsed_by_dim)
+                    pbar.update(1)
 
     torch.cuda.empty_cache()
 

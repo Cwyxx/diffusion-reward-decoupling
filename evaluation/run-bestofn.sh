@@ -176,7 +176,7 @@ fi
 if [[ "${dataset}" == "qwen-image-bench" ]]; then
     : "${QIB_VLLM_URL:=http://localhost:8000/v1}"
     : "${QIB_VLLM_MODEL:=Qwen-Image-Bench}"
-    : "${QIB_VLLM_CONCURRENCY:=8}"
+    : "${QIB_VLLM_CONCURRENCY:=64}"
     export QIB_VLLM_URL QIB_VLLM_MODEL QIB_VLLM_CONCURRENCY
     echo "Qwen-Image-Bench judge: vLLM server ${QIB_VLLM_URL} (model ${QIB_VLLM_MODEL})"
 fi

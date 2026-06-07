@@ -5,8 +5,16 @@
 # http://localhost:8000/v1) and QIB_VLLM_MODEL (default Qwen-Image-Bench).
 # Start this FIRST, wait for "Uvicorn running on http://0.0.0.0:8000", then score.
 #
-# Thinking mode follows the chat-template default (ON). To turn it off, add:
-#   --default-chat-template-kwargs '{"enable_thinking": false}'
+# Thinking mode is turned OFF server-side via --default-chat-template-kwargs below
+# (short JSON-only decode = big speedup). For leaderboard parity (thinking ON),
+# drop that flag. The scoring client does not override this per-request.
+#
+# Throughput: --max-num-seqs 64 + --gpu-memory-utilization 0.90 let the server
+# batch many in-flight requests; set the client's QIB_VLLM_CONCURRENCY to match
+# (e.g. 64) so it keeps those slots full. If you hit OOM at startup, lower
+# --gpu-memory-utilization or --max-num-seqs. Removing --enforce-eager enables
+# CUDA graphs for a further decode speedup but needs more memory (may OOM here).
+# If you have 8 GPUs free, 2 replicas (--data-parallel-size 2, each TP=4) ~2x.
 set -euo pipefail
 
 source /data3/chenweiyan/miniconda3/etc/profile.d/conda.sh
@@ -24,10 +32,11 @@ vllm serve /data3/chenweiyan/.cache/modelscope/hub/models/Qwen/Qwen-Image-Bench 
     --tensor-parallel-size 4 \
     --dtype bfloat16 \
     --max-model-len 16384 \
-    --gpu-memory-utilization 0.75 \
-    --max-num-seqs 8 \
+    --gpu-memory-utilization 0.90 \
+    --max-num-seqs 64 \
     --limit-mm-per-prompt.image 1 \
     --limit-mm-per-prompt.video 0 \
     --mm-processor-cache-gb 0 \
     --enforce-eager \
-    --reasoning-parser qwen3
+    --reasoning-parser qwen3 \
+    --default-chat-template-kwargs '{"enable_thinking": false}'
