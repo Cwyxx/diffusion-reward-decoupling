@@ -26,7 +26,7 @@ from flow_grpo.rewards import multi_score
 AVAILABLE_METRICS = [
     "pickscore", "imagereward", "aesthetic", "hpsv3", "deqa", "visualquality_r1",
     "ocr", "geneval", "wise", "dpg-score", "dpg-score-mplug", "spatial-geneval",
-    "sd-safety-checker", "shieldgemma", "mhsc",
+    "sd-safety-checker", "shieldgemma_fp32", "mhsc",
     "dalleval-bias-gender", "dalleval-bias-attribute", "dalleval-bias-skintone",
     "diffdoctor", "effort", "pal4vst", "drct",
     "anytext-ocr",
@@ -50,15 +50,15 @@ def _dalleval_attr_keys():
 # Some metric names dispatch to scorers that write benchmark-specific score keys.
 METRIC_OUTPUT_KEYS = {
     "sd-safety-checker": ("sd-safety-flag",),
-    "shieldgemma": (
-        "shieldgemma-sexually-explicit-prob",
-        "shieldgemma-dangerous-prob",
-        "shieldgemma-violence-gore-prob",
-        "shieldgemma-unsafe-score",
-        "shieldgemma-sexually-explicit",
-        "shieldgemma-dangerous",
-        "shieldgemma-violence-gore",
-        "shieldgemma-unsafe",
+    "shieldgemma_fp32": (
+        "shieldgemma_fp32-sexually-explicit-prob",
+        "shieldgemma_fp32-dangerous-prob",
+        "shieldgemma_fp32-violence-gore-prob",
+        "shieldgemma_fp32-unsafe-score",
+        "shieldgemma_fp32-sexually-explicit",
+        "shieldgemma_fp32-dangerous",
+        "shieldgemma_fp32-violence-gore",
+        "shieldgemma_fp32-unsafe",
     ),
     "mhsc": (
         "mhsc-sexual-prob",
@@ -125,7 +125,7 @@ def run_metric(metric, image_paths, prompts, metadatas, batch_size, device):
     if metric == "spatial-geneval":
         raise RuntimeError("metric=spatial-geneval must be routed via _score_spatial_geneval_in_place")
 
-    if metric in {"sd-safety-checker", "shieldgemma"}:
+    if metric in {"sd-safety-checker", "shieldgemma_fp32"}:
         raise RuntimeError(f"metric={metric} must be routed via its ResponsibleAI scorer")
 
     if metric == "mhsc":
@@ -802,11 +802,11 @@ def _score_shieldgemma_in_place(todo_rows):
     batch_size = int(os.environ.get("SHIELDGEMMA_BATCH_SIZE", "1"))
     threshold = float(os.environ.get("SHIELDGEMMA_THRESHOLD", "0.5"))
     print(
-        f"[shieldgemma] {n} images to score; batch_size={batch_size} "
+        f"[shieldgemma_fp32] {n} images to score; batch_size={batch_size} "
         f"threshold={threshold}"
     )
 
-    for start in tqdm(range(0, n, batch_size), desc="shieldgemma"):
+    for start in tqdm(range(0, n, batch_size), desc="shieldgemma_fp32"):
         batch_rows = todo_rows[start : start + batch_size]
         images = [_open_rgb_image(r["image_path"]) for r in batch_rows]
         score_dicts = score_shieldgemma(
@@ -814,7 +814,7 @@ def _score_shieldgemma_in_place(todo_rows):
         )
         if len(score_dicts) != len(batch_rows):
             raise RuntimeError(
-                f"shieldgemma returned {len(score_dicts)} scores for "
+                f"shieldgemma_fp32 returned {len(score_dicts)} scores for "
                 f"{len(batch_rows)} images"
             )
         for row, scores in zip(batch_rows, score_dicts):
@@ -1227,7 +1227,7 @@ def main(args):
             _score_sd_safety_checker_in_place(todo)
             continue
 
-        if metric == "shieldgemma":
+        if metric == "shieldgemma_fp32":
             _score_shieldgemma_in_place(todo)
             continue
 

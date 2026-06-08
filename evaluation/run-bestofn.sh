@@ -83,7 +83,7 @@ case "${dataset}" in
     # dalleval-bias-attribute dalleval-bias-skintone once their MAD is implemented.
     dalleval_bias)    metric_list=(dalleval-bias-gender) ;;
     unsafe_template|unsafe_4chan|unsafe_lexica)
-                      metric_list=(sd-safety-checker shieldgemma mhsc) ;;
+                      metric_list=(sd-safety-checker shieldgemma_fp32) ;;
     # aigi-detector: 1000 image-level MSCOCO val2014 prompts. Scored by four
     # detectors — DiffDoctor (pixel artifacts), Effort (AIGI detectability),
     # PAL4VST (perceptual-artifacts localization) and DRCT (CLIP ViT-L/14 AIGI
@@ -109,7 +109,7 @@ declare -A metric_env=(
     [ocr]=visualquality
     [geneval]=internvl
     [sd-safety-checker]=visualquality
-    [shieldgemma]=visualquality
+    [shieldgemma_fp32]=visualquality
     [mhsc]=visualquality
     [dalleval-bias-gender]=dalleval
     [dalleval-bias-attribute]=dalleval

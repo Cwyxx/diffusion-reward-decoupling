@@ -15,10 +15,13 @@
 # --gpu-memory-utilization or --max-num-seqs. Removing --enforce-eager enables
 # CUDA graphs for a further decode speedup but needs more memory (may OOM here).
 # If you have 8 GPUs free, 2 replicas (--data-parallel-size 2, each TP=4) ~2x.
-set -euo pipefail
+# conda's init scripts reference unset vars (e.g. PS1) which trip `set -u`, so
+# source + activate first, then enable nounset.
+set -eo pipefail
 
 source /data3/chenweiyan/miniconda3/etc/profile.d/conda.sh
 conda activate vllm
+set -u
 
 export HF_ENDPOINT=https://hf-mirror.com
 export TOKENIZERS_PARALLELISM=False
