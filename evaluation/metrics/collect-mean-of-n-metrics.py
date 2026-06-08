@@ -22,7 +22,7 @@ every N in ``--n_list``, the "mean of N" value of four metrics:
                  0 = fully skewed .. 0.5 = perfectly balanced. Mirrors
                  aggregate-dalleval-bias.py:gender_mad with an added first-N filter.
   Clean-rate   : mean ``pal4vst-clean-rate`` over the first N samples (aigi-detector).
-  Real Score   : mean ``drct-real-score`` over the first N samples (aigi-detector).
+  Realism      : mean ``drct-real-score`` over the first N samples (aigi-detector).
 
 mean@N convention: per prompt take the first N samples (seed_index 0..N-1),
 average the per-image metric, then average over prompts. With complete N-sample
@@ -36,10 +36,10 @@ generated and scored by run-bestofn(-batch).sh. It never touches a GPU.
 Output: ``<output_dir>/mean-of-n.json`` with::
 
   {
-    "metrics": ["Safe", "Social Bias", "Clean-rate", "Real Score"],
+    "metrics": ["Safe", "Social Bias", "Clean-rate", "Realism"],
     "n_list": [1, 2, 4, 8, 16, 32],
     "data":    { method: { metric: { "1": value, "2": value, ... } } },
-    "vectors": { method: { "1": [Safe, Social Bias, Clean-rate, Real Score], ... } },
+    "vectors": { method: { "1": [Safe, Social Bias, Clean-rate, Realism], ... } },
     "config":  { ... provenance ... }
   }
 
@@ -55,7 +55,7 @@ from collections import defaultdict
 import numpy as np
 
 # Radar axes, in the order they appear in each method's `vectors` entry.
-METRIC_ORDER = ["Safe", "Social Bias", "Clean-rate", "Real Score"]
+METRIC_ORDER = ["Safe", "Social Bias", "Clean-rate", "Realism"]
 
 DEFAULT_METHODS = [
     "base-sd3",
@@ -220,15 +220,15 @@ def compute_method(method, base_root, bestofn_subdir, family, n_list):
                 # "higher=better": 0.5 = perfectly balanced, 0 = fully skewed.
                 data["Social Bias"][n] = 0.5 - mad_val
 
-        # Clean-rate / Real Score (both from aigi-detector)
+        # Clean-rate / Realism (both from aigi-detector)
         if aigi_rows is None:
             data["Clean-rate"][n] = None
-            data["Real Score"][n] = None
+            data["Realism"][n] = None
         else:
             clean_val, _ = _flat_mean_at_n(aigi_rows, PAL4VST_KEY, n)
             real_val, _ = _flat_mean_at_n(aigi_rows, DRCT_KEY, n)
             data["Clean-rate"][n] = clean_val
-            data["Real Score"][n] = real_val
+            data["Realism"][n] = real_val
             if clean_val is None:
                 warnings.append(f"[{method}] aigi-detector: no '{PAL4VST_KEY}' scores")
             if real_val is None:
@@ -277,7 +277,7 @@ def main(args):
                                 "definition": "bias-control score 0.5 - gender_MAD over professions, first-N samples (higher=better, range 0..0.5)"},
                 "Clean-rate": {"dataset": AIGI_DATASET, "score_key": PAL4VST_KEY,
                                "definition": "mean pal4vst-clean-rate over first-N samples"},
-                "Real Score": {"dataset": AIGI_DATASET, "score_key": DRCT_KEY,
+                "Realism": {"dataset": AIGI_DATASET, "score_key": DRCT_KEY,
                                "definition": "mean drct-real-score over first-N samples"},
             },
         },
@@ -310,7 +310,7 @@ def main(args):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(
         description="Collect the four radar-chart metrics (Safe / Social Bias / "
-        "Clean-rate / Real Score) as mean@N curves for a set of methods, into a "
+        "Clean-rate / Realism) as mean@N curves for a set of methods, into a "
         "single mean-of-n.json for downstream radar plotting."
     )
     ap.add_argument(
