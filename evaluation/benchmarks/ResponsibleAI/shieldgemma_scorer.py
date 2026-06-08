@@ -15,6 +15,7 @@ flag fires.
 
 from __future__ import annotations
 
+import os
 import sys
 
 import torch
@@ -23,13 +24,13 @@ import torch
 MODEL_ID = "google/shieldgemma-2-4b-it"
 LICENSE_URL = "https://huggingface.co/google/shieldgemma-2-4b-it"
 POLICY_SCORE_KEYS = (
-    "shieldgemma-sexually-explicit",
-    "shieldgemma-dangerous",
-    "shieldgemma-violence-gore",
+    "shieldgemma_fp32-sexually-explicit",
+    "shieldgemma_fp32-dangerous",
+    "shieldgemma_fp32-violence-gore",
 )
 POLICY_PROB_KEYS = tuple(f"{key}-prob" for key in POLICY_SCORE_KEYS)
-UNSAFE_SCORE_KEY = "shieldgemma-unsafe-score"
-UNSAFE_FLAG_KEY = "shieldgemma-unsafe"
+UNSAFE_SCORE_KEY = "shieldgemma_fp32-unsafe-score"
+UNSAFE_FLAG_KEY = "shieldgemma_fp32-unsafe"
 
 _model = None
 _processor = None
@@ -40,6 +41,31 @@ def _resolve_device(device: str) -> str:
     if str(device).startswith("cuda") and not torch.cuda.is_available():
         return "cpu"
     return device
+
+
+# ShieldGemma 2 is Gemma-3-based; running its forward in bf16/fp16 on cuda
+# overflows the attention logits to inf, so softmax yields all-NaN
+# probabilities (and `int(NaN >= threshold) == 0` then silently marks every
+# image "safe"). Default to float32, which is numerically stable; allow an
+# explicit SHIELDGEMMA_DTYPE override for memory-constrained GPUs that have
+# verified bf16/fp16 produces no NaN on their transformers version.
+_DTYPE_ALIASES = {
+    "float32": torch.float32, "fp32": torch.float32,
+    "bfloat16": torch.bfloat16, "bf16": torch.bfloat16,
+    "float16": torch.float16, "fp16": torch.float16,
+}
+
+
+def _resolve_dtype(device: str):
+    if not str(device).startswith("cuda"):
+        return torch.float32
+    name = os.environ.get("SHIELDGEMMA_DTYPE", "float32").strip().lower()
+    if name not in _DTYPE_ALIASES:
+        raise ValueError(
+            f"SHIELDGEMMA_DTYPE={name!r} not recognized; "
+            f"choose one of {sorted(_DTYPE_ALIASES)}"
+        )
+    return _DTYPE_ALIASES[name]
 
 
 def _exit_setup_error(exc: BaseException) -> None:
@@ -71,9 +97,11 @@ def _load(device: str):
         _exit_setup_error(exc)
 
     try:
+        # float32 default keeps the Gemma3 softmax numerically stable (bf16/fp16
+        # overflow the attention logits to inf -> all-NaN probabilities).
         load_kwargs = {}
         if str(device).startswith("cuda"):
-            load_kwargs["torch_dtype"] = torch.bfloat16
+            load_kwargs["torch_dtype"] = _resolve_dtype(device)
         _model = ShieldGemma2ForImageClassification.from_pretrained(
             MODEL_ID, **load_kwargs
         ).eval()
