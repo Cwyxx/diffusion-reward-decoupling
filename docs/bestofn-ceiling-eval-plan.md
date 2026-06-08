@@ -23,12 +23,12 @@
 - `evaluation/checkpoints/registry.py` — `CheckpointRecipe` dataclass + `REGISTRY` dict
 - `evaluation/checkpoints/loaders.py` — 4 generic loaders + `load_pipeline` dispatcher
 - `evaluation/checkpoints/verify-checkpoints.py` — smoke-test gate script
-- `evaluation/metrics/generate-images-bestofn.py` — N-image-per-prompt generator with resumption
-- `evaluation/metrics/aggregate-bestofn.py` — BoN curve computation + plotting
+- `evaluation/metrics/core/generate-images-bestofn.py` — N-image-per-prompt generator with resumption
+- `evaluation/metrics/core/aggregate-bestofn.py` — BoN curve computation + plotting
 - `evaluation/run-bestofn.sh` — single (method, dataset) orchestrator
 
 **Modify:**
-- `evaluation/metrics/score-images.py` — add `ocr` / `geneval` to whitelist; upgrade JSONL schema to `(sample_id, seed_index)` key + optional `metadata`; skip already-scored rows.
+- `evaluation/metrics/core/score-images.py` — add `ocr` / `geneval` to whitelist; upgrade JSONL schema to `(sample_id, seed_index)` key + optional `metadata`; skip already-scored rows.
 
 ---
 
@@ -669,14 +669,14 @@ git commit -m "Add Best-of-N aggregation primitives (HP max + binary pass@N)"
 ## Task 6: Generation script (`generate-images-bestofn.py`)
 
 **Files:**
-- Create: `evaluation/metrics/generate-images-bestofn.py`
+- Create: `evaluation/metrics/core/generate-images-bestofn.py`
 
 This is the largest single piece. It loops over (sample_id, seed_index ∈ [0, N)), generates each image only if the target file doesn't exist, writes atomically, updates the manifest, and supports drawbench-unique / ocr / geneval prompt sources.
 
 - [ ] **Step 1: Write the script**
 
 ```python
-# evaluation/metrics/generate-images-bestofn.py
+# evaluation/metrics/core/generate-images-bestofn.py
 """Generate N images per prompt with file-level resumption.
 
 Differences from generate-images.py:
@@ -902,7 +902,7 @@ import sys, os
 sys.path.insert(0, '/Users/chenweiyan/Documents/Post-training-AIGC/diffusion-reward-decoupling')
 import importlib.util
 spec = importlib.util.spec_from_file_location(
-    'gen', 'evaluation/metrics/generate-images-bestofn.py')
+    'gen', 'evaluation/metrics/core/generate-images-bestofn.py')
 m = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(m)
 print('Import OK')
@@ -914,7 +914,7 @@ Expected: `Import OK`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add evaluation/metrics/generate-images-bestofn.py
+git add evaluation/metrics/core/generate-images-bestofn.py
 git commit -m "Add SD-v1.5 BoN generator with manifest + atomic write resumption"
 ```
 
@@ -923,7 +923,7 @@ git commit -m "Add SD-v1.5 BoN generator with manifest + atomic write resumption
 ## Task 7: Modify `score-images.py` (whitelist + schema + skip-already-scored)
 
 **Files:**
-- Modify: `evaluation/metrics/score-images.py`
+- Modify: `evaluation/metrics/core/score-images.py`
 
 Three changes per spec §4.3:
 1. Add `ocr` and `geneval` to `AVAILABLE_METRICS`.
@@ -934,7 +934,7 @@ Three changes per spec §4.3:
 - [ ] **Step 1: Read current state**
 
 ```bash
-sed -n '1,120p' evaluation/metrics/score-images.py
+sed -n '1,120p' evaluation/metrics/core/score-images.py
 ```
 
 (Reference; no edits yet.)
@@ -942,7 +942,7 @@ sed -n '1,120p' evaluation/metrics/score-images.py
 - [ ] **Step 2: Replace the file**
 
 ```python
-# evaluation/metrics/score-images.py
+# evaluation/metrics/core/score-images.py
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES.
 # SPDX-License-Identifier: Apache-2.0
 """Score images produced by generate-images.py / generate-images-bestofn.py.
@@ -1096,7 +1096,7 @@ if __name__ == "__main__":
 python -c "
 import sys, importlib.util
 sys.path.insert(0, '/Users/chenweiyan/Documents/Post-training-AIGC/diffusion-reward-decoupling')
-spec = importlib.util.spec_from_file_location('s', 'evaluation/metrics/score-images.py')
+spec = importlib.util.spec_from_file_location('s', 'evaluation/metrics/core/score-images.py')
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 print('AVAILABLE_METRICS:', m.AVAILABLE_METRICS)
 "
@@ -1107,7 +1107,7 @@ Expected output should include `'ocr'` and `'geneval'` in AVAILABLE_METRICS.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add evaluation/metrics/score-images.py
+git add evaluation/metrics/core/score-images.py
 git commit -m "Add ocr/geneval to score-images.py with seed-aware schema and resumption"
 ```
 
@@ -1116,7 +1116,7 @@ git commit -m "Add ocr/geneval to score-images.py with seed-aware schema and res
 ## Task 8: Aggregation script (`aggregate-bestofn.py`)
 
 **Files:**
-- Create: `evaluation/metrics/aggregate-bestofn.py`
+- Create: `evaluation/metrics/core/aggregate-bestofn.py`
 
 Reads `evaluation_results.jsonl` for one (method, dataset), computes BoN curves for each scored metric, and writes:
 - `bestofn/curves.json` — `{metric: {1: x, 2: y, ...}, "ceiling_lift": {...}, ...}`
@@ -1125,7 +1125,7 @@ Reads `evaluation_results.jsonl` for one (method, dataset), computes BoN curves 
 - [ ] **Step 1: Write the script**
 
 ```python
-# evaluation/metrics/aggregate-bestofn.py
+# evaluation/metrics/core/aggregate-bestofn.py
 """Compute Best-of-N curves for one (method, dataset) directory.
 
 Inputs: ${output_dir}/evaluation_results.jsonl (rows keyed by (sample_id, seed_index))
@@ -1258,7 +1258,7 @@ if __name__ == "__main__":
 python -c "
 import importlib.util, sys
 sys.path.insert(0, '/Users/chenweiyan/Documents/Post-training-AIGC/diffusion-reward-decoupling')
-spec = importlib.util.spec_from_file_location('a', 'evaluation/metrics/aggregate-bestofn.py')
+spec = importlib.util.spec_from_file_location('a', 'evaluation/metrics/core/aggregate-bestofn.py')
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 print('Import OK')
 "
@@ -1269,7 +1269,7 @@ Expected: `Import OK`.
 - [ ] **Step 3: Commit**
 
 ```bash
-git add evaluation/metrics/aggregate-bestofn.py
+git add evaluation/metrics/core/aggregate-bestofn.py
 git commit -m "Add Best-of-N curve aggregator with per-metric log-x plots"
 ```
 
@@ -1567,7 +1567,7 @@ Try to re-run with a different `--guidance_scale`:
 
 ```bash
 OUT=/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/bestofn-eval/sd-v1-5/base/drawbench-unique
-python evaluation/metrics/generate-images-bestofn.py \
+python evaluation/metrics/core/generate-images-bestofn.py \
     --method base --dataset drawbench-unique \
     --output_dir "$OUT" \
     --n_max 8 --guidance_scale 4.5

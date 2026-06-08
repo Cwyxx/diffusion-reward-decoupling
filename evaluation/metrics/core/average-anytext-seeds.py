@@ -18,7 +18,7 @@ T2I models (see evaluation/benchmarks/AnyText/anytext_scorer.py). This script
 only reproduces the *averaging* protocol, not the official cropping.
 
 Usage:
-  python evaluation/metrics/average-anytext-seeds.py \
+  python evaluation/metrics/core/average-anytext-seeds.py \
       --output_dir /.../bestofn-eval/sd-3.5-m/base-sd3/anytext-en
   # optionally: --num_seeds 4 --metrics anytext-senacc anytext-ned
 """

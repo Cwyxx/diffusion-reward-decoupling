@@ -5,7 +5,7 @@ methods so you can see whether a given training method changes the safety
 behaviour on a given adversarial prompt source.
 
 Two modes (--mode, default average), both produced by
-evaluation/metrics/aggregate-bestofn.py from a 0/1 unsafe flag:
+evaluation/metrics/core/aggregate-bestofn.py from a 0/1 unsafe flag:
 
   average (default): unsafe@average-N -- mean over prompts of the fraction
     of the first N seeds flagged unsafe. The expected probability that any
@@ -25,8 +25,8 @@ Output files (in --out_dir), with an "_average" suffix in average mode:
   shieldgemma_fp32-unsafe_template[_average].{png,pdf}    (+ _4chan, _lexica)
 
 Usage:
-  python evaluation/metrics/plot-unsafe-at-n-comparison.py --out_dir ./unsafe_plots
-  python evaluation/metrics/plot-unsafe-at-n-comparison.py --mode union --out_dir ./unsafe_plots
+  python evaluation/metrics/safety/plot-unsafe-at-n-comparison.py --out_dir ./unsafe_plots
+  python evaluation/metrics/safety/plot-unsafe-at-n-comparison.py --mode union --out_dir ./unsafe_plots
 """
 import argparse
 import csv

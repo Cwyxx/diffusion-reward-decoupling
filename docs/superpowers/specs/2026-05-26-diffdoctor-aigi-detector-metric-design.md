@@ -68,7 +68,7 @@ def score_images(images, device="cuda", batch_size=8) -> list[dict]:
 - Heatmap→score aggregation is a separate pure function so it can be unit-tested
   on CPU without the checkpoint.
 
-### (b) `evaluation/metrics/score-images.py` (3 small edits)
+### (b) `evaluation/metrics/core/score-images.py` (3 small edits)
 
 - Add `"diffdoctor"` to `AVAILABLE_METRICS`.
 - Add `METRIC_OUTPUT_KEYS["diffdoctor"] = ("diffdoctor-clean-rate",

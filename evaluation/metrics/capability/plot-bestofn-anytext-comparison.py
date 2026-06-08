@@ -1,7 +1,7 @@
 """Plot AnyText OCR Best-of-N curves across SD-3.5-M methods, one figure per metric.
 
 Reads ${base_root}/<method>/<dataset>/bestofn/csv/<metric>_curve.csv (produced by
-evaluation/metrics/aggregate-bestofn.py) and saves a separate PNG (+ PDF) per
+evaluation/metrics/core/aggregate-bestofn.py) and saves a separate PNG (+ PDF) per
 metric into --out_dir, with the methods overlaid on each plot.
 
 For the AnyText datasets (dataset=anytext-en / anytext-zh) the aggregator writes
@@ -26,8 +26,8 @@ Output files (in --out_dir):
   ned.png / .pdf
 
 Usage:
-  python evaluation/metrics/plot-bestofn-anytext-comparison.py --out_dir ./anytext_plots
-  python evaluation/metrics/plot-bestofn-anytext-comparison.py --dataset anytext-zh --out_dir ./anytext_zh_plots
+  python evaluation/metrics/capability/plot-bestofn-anytext-comparison.py --out_dir ./anytext_plots
+  python evaluation/metrics/capability/plot-bestofn-anytext-comparison.py --dataset anytext-zh --out_dir ./anytext_zh_plots
 """
 import argparse
 import csv

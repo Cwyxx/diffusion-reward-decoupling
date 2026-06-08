@@ -13,7 +13,7 @@ figure suptitle.
 
 USAGE
 -----
-  python evaluation/metrics/plot-radar-mean-of-n.py \
+  python evaluation/metrics/radar/plot-radar-mean-of-n.py \
       --mean_json plot-radar/mean-of-n.json \
       --out plot-radar/mean-of-n/radar.png --n 16
 

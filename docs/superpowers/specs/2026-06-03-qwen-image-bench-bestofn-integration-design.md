@@ -77,7 +77,7 @@ SD-3.5-M，均为英文文本编码器，中文 prompt 会大面积失效。judg
   的 `CUDA_VISIBLE_DEVICES` 设为全部 `--gpus`（不走单 GPU `score_gpu` 路径）。
 - `max_batch_size=1`（OOM 约束）。
 
-### 3. 打分器（`evaluation/metrics/score-images.py` 新增 in-place 分支）
+### 3. 打分器（`evaluation/metrics/core/score-images.py` 新增 in-place 分支）
 
 仿 `wise` / `dpg-score-mplug` 的"独立路由"模式（27B 模型不走 `multi_score` 的
 batched-on-cuda 契约）：
@@ -115,7 +115,7 @@ batched-on-cuda 契约）：
 - 关键不变式：`dims_en` 按 ID（按 prompt）固定 → 同一 prompt 的 N 张图覆盖**相同**
   维度集合，故每个维度"该 prompt 要么全有、要么全无"，便于聚合按 prompt 取舍。
 
-### 4. 选择式聚合（`evaluation/metrics/aggregate-bestofn.py` 新增分支）
+### 4. 选择式聚合（`evaluation/metrics/core/aggregate-bestofn.py` 新增分支）
 
 现有 `bon_continuous` 是"每键各自 max"，不符合本设计。新增
 `_aggregate_qwen_image_bench`（仿 `_aggregate_spatial_geneval`），在 `main()` 里以

@@ -35,8 +35,10 @@ PREFERRED_ORDER = [
     "base-sd3",
     "flowgrpo-pickscore-sd3",
     "grpo-guard-sd3",
+    "diffusionnft-sd3",
     "diffusion-dpo-sd3",
     "realalign-sd3",
+    "civitaialign-sd3",
 ]
 
 

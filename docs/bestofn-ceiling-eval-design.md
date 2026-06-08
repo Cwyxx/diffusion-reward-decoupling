@@ -171,7 +171,7 @@ def load_pipeline(method_name: str) -> StableDiffusionPipeline: ...
 
 **`loaders.py`** 提供 4 个通用 loader，把 recipe 翻译为具体 diffusers 调用，返回统一 `StableDiffusionPipeline` 接口。
 
-### 4.2 生成脚本（`evaluation/metrics/generate-images-bestofn.py`）
+### 4.2 生成脚本（`evaluation/metrics/core/generate-images-bestofn.py`）
 
 仿照现有 `generate-images.py`，差异如下：
 
@@ -198,7 +198,7 @@ DATASET_LOADERS = {
 
 GenEval 的特殊性：scoring 时需要传 metadata（class、count 等）给 `geneval_score`。`evaluation_results.jsonl` 的行加 optional `metadata` 字段，drawbench/ocr 留空。
 
-### 4.3 评分脚本（`evaluation/metrics/score-images.py` 修改）
+### 4.3 评分脚本（`evaluation/metrics/core/score-images.py` 修改）
 
 **3 处修改**：
 
@@ -210,7 +210,7 @@ GenEval 的特殊性：scoring 时需要传 metadata（class、count 等）给 `
 
 **Batch size**：默认从 2 提到 8（BoN 场景下评分图数为现有的 N 倍）；具体值在 verify 阶段量 OOM 边界。`SMALL_BATCH_METRICS = {"hpsv3", "visualquality_r1"}` 沿用 bs=1。
 
-### 4.4 聚合脚本（`evaluation/metrics/aggregate-bestofn.py`，新增）
+### 4.4 聚合脚本（`evaluation/metrics/core/aggregate-bestofn.py`，新增）
 
 输入：`evaluation_results.jsonl`。
 输出：
@@ -305,9 +305,9 @@ bash evaluation/run-bestofn.sh 1 base ocr              32
 
 1. `evaluation/checkpoints/{__init__,registry,loaders}.py`：填好 7 个 method recipe + 4 个 loader。
 2. `evaluation/checkpoints/verify-checkpoints.py`：smoke test gate。
-3. `evaluation/metrics/generate-images-bestofn.py`：BoN 生成脚本（resumption + manifest + 原子写）。
-4. `evaluation/metrics/score-images.py` 修改：白名单加 ocr/geneval、schema 升级、跳过已评分行。
-5. `evaluation/metrics/aggregate-bestofn.py`：曲线计算 + 绘图。
+3. `evaluation/metrics/core/generate-images-bestofn.py`：BoN 生成脚本（resumption + manifest + 原子写）。
+4. `evaluation/metrics/core/score-images.py` 修改：白名单加 ocr/geneval、schema 升级、跳过已评分行。
+5. `evaluation/metrics/core/aggregate-bestofn.py`：曲线计算 + 绘图。
 6. `evaluation/run-bestofn.sh`：单组合编排。
 7. 跑 verify-checkpoints 通过 → 跑 base + 1 个 method × 1 个 dataset 小规模 dry run → 确认无误后铺全 21 组合。
 

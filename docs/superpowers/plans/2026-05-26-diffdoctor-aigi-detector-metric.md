@@ -17,7 +17,7 @@
 - **Create** `evaluation/benchmarks/DiffDoctor/__init__.py` — package marker.
 - **Create** `evaluation/benchmarks/DiffDoctor/diffdoctor_scorer.py` — model load, preprocessing (replicating `ad_inference.py`), heatmap→score aggregation, public `score_images`.
 - **Create** `evaluation/benchmarks/DiffDoctor/test_diffdoctor_scorer.py` — CPU unit tests for the pure aggregation function (`heatmaps_to_scores`), runnable via `python`.
-- **Modify** `evaluation/metrics/score-images.py` — register `diffdoctor` in `AVAILABLE_METRICS`, `METRIC_OUTPUT_KEYS`, add `_score_diffdoctor_in_place`, dispatch in `main()`.
+- **Modify** `evaluation/metrics/core/score-images.py` — register `diffdoctor` in `AVAILABLE_METRICS`, `METRIC_OUTPUT_KEYS`, add `_score_diffdoctor_in_place`, dispatch in `main()`.
 - **Modify** `evaluation/run-bestofn.sh` — aigi-detector `metric_list=(diffdoctor)`, `metric_env[diffdoctor]=visualquality`, update Stage 3 comment.
 - **No change** `evaluation/run-bestofn-batch.sh` — only loops datasets; picks up the new scorer automatically.
 
@@ -314,7 +314,7 @@ git commit -m "Add DiffDoctor SegFormer loading, preprocessing, and score_images
 ## Task 3: Wire `diffdoctor` into score-images.py
 
 **Files:**
-- Modify: `evaluation/metrics/score-images.py`
+- Modify: `evaluation/metrics/core/score-images.py`
 
 - [ ] **Step 1: Register the metric name**
 
@@ -390,14 +390,14 @@ insert:
 
 Run:
 ```bash
-python -c "import sys; sys.path.insert(0,'.'); import importlib.util as u; spec=u.spec_from_file_location('si','evaluation/metrics/score-images.py'); m=u.module_from_spec(spec); spec.loader.exec_module(m); assert 'diffdoctor' in m.AVAILABLE_METRICS; assert m.METRIC_OUTPUT_KEYS['diffdoctor']==('diffdoctor-clean-rate','diffdoctor-clean-area'); print('score-images wiring OK')"
+python -c "import sys; sys.path.insert(0,'.'); import importlib.util as u; spec=u.spec_from_file_location('si','evaluation/metrics/core/score-images.py'); m=u.module_from_spec(spec); spec.loader.exec_module(m); assert 'diffdoctor' in m.AVAILABLE_METRICS; assert m.METRIC_OUTPUT_KEYS['diffdoctor']==('diffdoctor-clean-rate','diffdoctor-clean-area'); print('score-images wiring OK')"
 ```
 Expected: `score-images wiring OK`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add evaluation/metrics/score-images.py
+git add evaluation/metrics/core/score-images.py
 git commit -m "Wire diffdoctor metric into score-images.py"
 ```
 
@@ -526,7 +526,7 @@ If an `aigi-detector` generation output dir already exists, score a copy of its 
 
 ```bash
 conda activate visualquality
-CUDA_VISIBLE_DEVICES=0 python evaluation/metrics/score-images.py \
+CUDA_VISIBLE_DEVICES=0 python evaluation/metrics/core/score-images.py \
     --output_dir <existing_aigi_output_dir> --metrics diffdoctor
 python -c "import json; a=json.load(open('<existing_aigi_output_dir>/average_scores.json')); print({k:a[k] for k in a if k.startswith('diffdoctor')})"
 ```

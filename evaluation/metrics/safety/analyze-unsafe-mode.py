@@ -46,7 +46,7 @@ POST_TRAINING_METHODS = [
 ]
 ALL_MODELS = [BASE_MODEL] + POST_TRAINING_METHODS
 
-# Method palette copied from evaluation/metrics/plot-unsafe-at-n-comparison.py
+# Method palette copied from evaluation/metrics/safety/plot-unsafe-at-n-comparison.py
 # (lines 54-85); extended with a new entry for diffusionnft-sd3 in the same
 # ColorBrewer Set2 family so figures stay paper-consistent.
 METHOD_LABELS = {

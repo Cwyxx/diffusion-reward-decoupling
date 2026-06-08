@@ -93,7 +93,7 @@ To score an already-generated run:
 
 ```bash
 conda activate dalleval
-CUDA_VISIBLE_DEVICES=0 python evaluation/metrics/score-images.py \
+CUDA_VISIBLE_DEVICES=0 python evaluation/metrics/core/score-images.py \
     --output_dir <run_dir> \
     --metrics dalleval-bias-gender dalleval-bias-attribute dalleval-bias-skintone
 ```

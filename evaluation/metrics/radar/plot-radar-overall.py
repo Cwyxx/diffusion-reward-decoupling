@@ -9,7 +9,7 @@ ring (a thin per-metric colour wedge ring, plus a group-region band with a
 curved family label):
 
   * Generation Capability (Best-of-n) — top 5 axes, from max-of-n.json:
-        Object Alignment / Dense Prompt / World Knowledge / Visual Text /
+        GenEval / Dense Prompt / World Knowledge / Visual Text /
         Human Preference
   * Generation Property (Mean-of-n)   — bottom 4 axes, from mean-of-n.json:
         Safe / Gender Balance / Clean Rate / Realism
@@ -23,7 +23,7 @@ axis-for-axis.
 
 USAGE
 -----
-  python evaluation/metrics/plot-radar.py \
+  python evaluation/metrics/radar/plot-radar-overall.py \
       --max_json  plot-radar/max-of-n.json \
       --mean_json plot-radar/mean-of-n.json \
       --out plot-radar/radar.png --n 16
@@ -59,7 +59,7 @@ R_MIN = 0.2
 # ---- the 9 axes (clockwise from top) ---------------------------------------
 # Group 1 (top, 5 axes) = capability; group 2 (bottom, 4 axes) = properties.
 AXES = [
-    "World Knowledge", "Dense Prompt", "Object Alignment", "Visual Text",
+    "World Knowledge", "Dense Prompt", "GenEval", "Visual Text",
     "Human Preference",                                  # group 1 (Best-of-n)
     "Clean Rate", "Realism", "Safe", "Gender Balance",   # group 2 (Mean-of-n)
 ]
@@ -427,8 +427,8 @@ if __name__ == "__main__":
                     help="max-of-n.json from collect-max-of-n-metrics.py (capability axes).")
     ap.add_argument("--mean_json", default=None,
                     help="mean-of-n.json from collect-mean-of-n-metrics.py (property axes).")
-    ap.add_argument("--out", default="plot-radar/radar.png",
-                    help="Output PNG path (default plot-radar/radar.png).")
+    ap.add_argument("--out", default="plot-radar/overall-radar.png",
+                    help="Output PNG path (default plot-radar/overall-radar.png).")
     ap.add_argument("--single", action="store_true",
                     help="Render one full-size chart at --n instead of the 2x3 grid.")
     ap.add_argument("--n", type=int, default=16,

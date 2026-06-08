@@ -118,7 +118,7 @@ def probs_to_scores(fake_probs) -> list[dict]:
   override.
 - Assert `fake_prob` is in `[0, 1]` before aggregation.
 
-### (b) `evaluation/metrics/score-images.py` (3 small edits)
+### (b) `evaluation/metrics/core/score-images.py` (3 small edits)
 
 - Add `"effort"` to `AVAILABLE_METRICS`.
 - Add `METRIC_OUTPUT_KEYS["effort"] = ("effort-real-score",)` so

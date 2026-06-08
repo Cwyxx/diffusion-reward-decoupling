@@ -12,7 +12,7 @@ Output files (in --out_dir):
   ocr_continuous.png / .pdf
 
 Usage:
-  python evaluation/metrics/plot-bestofn-comparison.py --out_dir ./plots
+  python evaluation/metrics/capability/plot-bestofn-comparison.py --out_dir ./plots
 """
 import argparse
 import csv

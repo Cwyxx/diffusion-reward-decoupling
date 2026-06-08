@@ -15,7 +15,7 @@ from tqdm import tqdm
 
 
 MODEL_ID = "stabilityai/stable-diffusion-3.5-medium"
-DATASET_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "dataset")
+DATASET_ROOT = os.path.join(os.path.dirname(__file__), "..", "..", "..", "dataset")
 LORA_TARGET_MODULES = [
     "attn.add_k_proj",
     "attn.add_q_proj",

@@ -3,7 +3,7 @@
 Algorithm copied verbatim from the cloned official repo at
 ``flow_grpo/geneval-official/evaluation/evaluate_images.py`` so the
 binary ``correct`` flag this returns matches the headline number reported
-in the GenEval paper. Used by ``evaluation/metrics/score-images.py``.
+in the GenEval paper. Used by ``evaluation/metrics/core/score-images.py``.
 
 Models are lazy-loaded as a process-wide singleton on the first call to
 ``score(...)``; subsequent calls reuse them.

@@ -6,7 +6,7 @@ PNG (+ PDF) per GenEval dimension into --out_dir, with the five methods
 overlaid on each plot.
 
 The per-tag and overall CSVs are produced by
-evaluation/metrics/aggregate-bestofn.py:_aggregate_geneval. Tags follow the
+evaluation/metrics/core/aggregate-bestofn.py:_aggregate_geneval. Tags follow the
 official GenEval grouping (GENEVAL_TAGS at aggregate-bestofn.py:66); Overall
 is the macro-average over the 6 tags at each N (aggregate-bestofn.py:298-301).
 
@@ -20,7 +20,7 @@ Output files (in --out_dir):
   overall.png / .pdf
 
 Usage:
-  python evaluation/metrics/plot-bestofn-geneval-comparison.py --out_dir ./geneval_plots
+  python evaluation/metrics/capability/plot-bestofn-geneval-comparison.py --out_dir ./geneval_plots
 """
 import argparse
 import csv

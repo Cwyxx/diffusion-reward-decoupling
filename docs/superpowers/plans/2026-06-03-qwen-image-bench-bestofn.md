@@ -32,9 +32,9 @@
 - `evaluation/metrics/qwen_image_bench_engine.py` — ms-swift TransformersEngine 封装（batch=1 + device_map=auto），等价上游 `MsSwiftJudge` 但落在我们树内（不改上游）。
 
 修改：
-- `evaluation/metrics/generate-images-bestofn.py` — 注册 dataset loader。
-- `evaluation/metrics/score-images.py` — `AVAILABLE_METRICS` + `_score_qwen_image_bench_in_place` + dispatch。
-- `evaluation/metrics/aggregate-bestofn.py` — `bon_select` + `_aggregate_qwen_image_bench` + 路由。
+- `evaluation/metrics/core/generate-images-bestofn.py` — 注册 dataset loader。
+- `evaluation/metrics/core/score-images.py` — `AVAILABLE_METRICS` + `_score_qwen_image_bench_in_place` + dispatch。
+- `evaluation/metrics/core/aggregate-bestofn.py` — `bon_select` + `_aggregate_qwen_image_bench` + 路由。
 - `evaluation/run-bestofn.sh` — dataset case / metric_env / 多卡 case / 判分模型 env。
 
 ---
@@ -163,7 +163,7 @@ git commit -m "feat(qwen-image-bench): prompt prep (prompt_en/dims_en) + prompts
 ## Task 2: 注册 generate dataset loader
 
 **Files:**
-- Modify: `evaluation/metrics/generate-images-bestofn.py`（`_DATASET_LOADERS`，约 87–100 行）
+- Modify: `evaluation/metrics/core/generate-images-bestofn.py`（`_DATASET_LOADERS`，约 87–100 行）
 
 - [ ] **Step 1: 加注册项**
 
@@ -183,7 +183,7 @@ Run:
 ```bash
 python -c "
 import importlib.util, os
-spec = importlib.util.spec_from_file_location('g', 'evaluation/metrics/generate-images-bestofn.py')
+spec = importlib.util.spec_from_file_location('g', 'evaluation/metrics/core/generate-images-bestofn.py')
 m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
 items = m.load_prompts('qwen-image-bench')
 print('n=', len(items))
@@ -199,7 +199,7 @@ Expected: `n= 1000`、metadata 含 `dims_en` 与 `ID`、打印 `OK`。
 - [ ] **Step 3: 提交**
 
 ```bash
-git add evaluation/metrics/generate-images-bestofn.py
+git add evaluation/metrics/core/generate-images-bestofn.py
 git commit -m "feat(qwen-image-bench): register generate dataset loader"
 ```
 
@@ -500,7 +500,7 @@ git commit -m "feat(qwen-image-bench): ms-swift engine wrapper (batch=1, 4-GPU d
 判分器：遍历 `todo` 行，按 `metadata.dims_en` 跑 27B judge，写 `row["scores"]` 的 `qwen-image-bench`(overall) 与 `qwen-image-bench-<dim>`，并把每图每问题的原始判断追加到 `qwen_image_bench_judge_outputs.jsonl`。该文件兼作判分缓存：崩溃后重跑可复用已有判断、免再跑 27B。
 
 **Files:**
-- Modify: `evaluation/metrics/score-images.py`（`AVAILABLE_METRICS` 约 26–33 行；新增函数；`main` dispatch 约 1075–1133 行）
+- Modify: `evaluation/metrics/core/score-images.py`（`AVAILABLE_METRICS` 约 26–33 行；新增函数；`main` dispatch 约 1075–1133 行）
 
 - [ ] **Step 1: 把 metric 加入 `AVAILABLE_METRICS`**
 
@@ -607,7 +607,7 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
 ```
 
 注：`qwen_image_bench_engine`/`qwen_image_bench_judge` 与 score-images.py 同在
-`evaluation/metrics/`；score-images.py 以脚本方式运行（`python evaluation/metrics/score-images.py`），
+`evaluation/metrics/`；score-images.py 以脚本方式运行（`python evaluation/metrics/core/score-images.py`），
 Python 会自动把脚本所在目录加入 `sys.path[0]`，故 `from qwen_image_bench_judge import ...`/
 `from qwen_image_bench_engine import ...` 可直接解析。`qwen_image_bench_judge` 在导入时再把
 软链/真实的 `flow_grpo/Qwen-Image-Bench` 加入 `sys.path`，复用 `checklists`/`score_utils`（只读）。
@@ -630,7 +630,7 @@ Python 会自动把脚本所在目录加入 `sys.path[0]`，故 `from qwen_image
 
 Run:
 ```bash
-python -c "import ast; ast.parse(open('evaluation/metrics/score-images.py').read()); print('syntax OK')"
+python -c "import ast; ast.parse(open('evaluation/metrics/core/score-images.py').read()); print('syntax OK')"
 ```
 Expected: `syntax OK`
 
@@ -640,7 +640,7 @@ python - <<'PY'
 import json, os, sys, tempfile
 sys.path.insert(0, "evaluation/metrics")
 import importlib.util
-spec = importlib.util.spec_from_file_location("score_images", "evaluation/metrics/score-images.py")
+spec = importlib.util.spec_from_file_location("score_images", "evaluation/metrics/core/score-images.py")
 # 仅导入函数定义而不触发 main：score-images.py 顶层 import 了 flow_grpo.rewards，
 # 若该 import 过重可改为直接复制 _qib_load_raw_cache 验证。这里只验证缓存读取逻辑：
 PY
@@ -651,7 +651,7 @@ echo "cache-roundtrip checked in Task 8 smoke test"
 - [ ] **Step 5: 提交**
 
 ```bash
-git add evaluation/metrics/score-images.py
+git add evaluation/metrics/core/score-images.py
 git commit -m "feat(qwen-image-bench): in-place 27B judge scorer with raw-judgment cache + resume"
 ```
 
@@ -660,7 +660,7 @@ git commit -m "feat(qwen-image-bench): in-place 27B judge scorer with raw-judgme
 ## Task 6: 选择式 BoN 聚合（aggregate-bestofn.py）
 
 **Files:**
-- Modify: `evaluation/metrics/aggregate-bestofn.py`（新增 `bon_select`；新增 `_aggregate_qwen_image_bench` 与 breakdown 画图；`main` 路由）
+- Modify: `evaluation/metrics/core/aggregate-bestofn.py`（新增 `bon_select`；新增 `_aggregate_qwen_image_bench` 与 breakdown 画图；`main` 路由）
 - Create: `evaluation/metrics/test_qwen_image_bench_agg.py`
 
 - [ ] **Step 1: 写失败测试**
@@ -878,7 +878,7 @@ Expected: PASS（3 个测试全过）
 - [ ] **Step 7: 提交**
 
 ```bash
-git add evaluation/metrics/aggregate-bestofn.py evaluation/metrics/test_qwen_image_bench_agg.py
+git add evaluation/metrics/core/aggregate-bestofn.py evaluation/metrics/test_qwen_image_bench_agg.py
 git commit -m "feat(qwen-image-bench): selection-based BoN aggregation (Total + 5 L1 dims)"
 ```
 
@@ -1000,7 +1000,7 @@ Run（重复 Stage2 评分）:
 ```bash
 OUT=$(ls -d */bestofn-eval/*/base-sd3/qwen-image-bench 2>/dev/null | head -1 || true)
 # 用实际 output_dir 替换 $OUT；env 切到 qwen-image-bench
-python evaluation/metrics/score-images.py --output_dir "<OUTPUT_DIR>" --metrics qwen-image-bench
+python evaluation/metrics/core/score-images.py --output_dir "<OUTPUT_DIR>" --metrics qwen-image-bench
 ```
 Expected: 打印 `0/10 rows todo`（所有行已有 `qwen-image-bench` 分），判分器 `return`，**不构造 27B 引擎**、不新增 raw 行。
 （额外验证缓存路径：手工删掉 `evaluation_results.jsonl` 里某行的 `qwen-image-bench*` 分数后重跑 —— 应命中 `qwen_image_bench_judge_outputs.jsonl` 缓存、`raw cache hits available` 非 0、不重跑该图的 27B。）
@@ -1009,7 +1009,7 @@ Expected: 打印 `0/10 rows todo`（所有行已有 `qwen-image-bench` 分），
 
 ```bash
 rm -f dataset/qwen-image-bench/prompts.smoke.jsonl
-git checkout evaluation/metrics/generate-images-bestofn.py 2>/dev/null || true   # 若临时改过 loader
+git checkout evaluation/metrics/core/generate-images-bestofn.py 2>/dev/null || true   # 若临时改过 loader
 git status   # 确认无遗留临时改动
 ```
 （冒烟测试本身不产生需提交的源码改动；若一切正常则本任务无提交。）

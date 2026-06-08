@@ -17,7 +17,7 @@
 - **Create** `evaluation/benchmarks/Effort/__init__.py` — package marker.
 - **Create** `evaluation/benchmarks/Effort/effort_scorer.py` — SVD-residual model classes (copied from the official detector), `EffortDetector`, checkpoint loading (official recipe), CLIP-normalized preprocessing, fake-prob→score aggregation, public `score_images`.
 - **Create** `evaluation/benchmarks/Effort/test_effort_scorer.py` — CPU unit tests for the pure aggregation function (`probs_to_scores`), runnable via `python`.
-- **Modify** `evaluation/metrics/score-images.py` — register `effort` in `AVAILABLE_METRICS`, `METRIC_OUTPUT_KEYS`, add `_score_effort_in_place`, dispatch in `main()`.
+- **Modify** `evaluation/metrics/core/score-images.py` — register `effort` in `AVAILABLE_METRICS`, `METRIC_OUTPUT_KEYS`, add `_score_effort_in_place`, dispatch in `main()`.
 - **Modify** `evaluation/run-bestofn.sh` — aigi-detector `metric_list=(diffdoctor effort)`, `metric_env[effort]=visualquality`, update Stage 3 comment.
 - **No change** `evaluation/run-bestofn-batch.sh` — only loops datasets; picks up the new scorer automatically.
 
@@ -437,7 +437,7 @@ git commit -m "Add Effort model definition, checkpoint loading, preprocessing, s
 ## Task 3: Wire `effort` into score-images.py
 
 **Files:**
-- Modify: `evaluation/metrics/score-images.py`
+- Modify: `evaluation/metrics/core/score-images.py`
 
 - [ ] **Step 1: Register the metric name**
 
@@ -514,14 +514,14 @@ insert:
 
 Run:
 ```bash
-python -c "import sys; sys.path.insert(0,'.'); import importlib.util as u; spec=u.spec_from_file_location('si','evaluation/metrics/score-images.py'); m=u.module_from_spec(spec); spec.loader.exec_module(m); assert 'effort' in m.AVAILABLE_METRICS; assert m.METRIC_OUTPUT_KEYS['effort']==('effort-real-score',); print('score-images wiring OK')"
+python -c "import sys; sys.path.insert(0,'.'); import importlib.util as u; spec=u.spec_from_file_location('si','evaluation/metrics/core/score-images.py'); m=u.module_from_spec(spec); spec.loader.exec_module(m); assert 'effort' in m.AVAILABLE_METRICS; assert m.METRIC_OUTPUT_KEYS['effort']==('effort-real-score',); print('score-images wiring OK')"
 ```
 Expected: `score-images wiring OK`
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add evaluation/metrics/score-images.py
+git add evaluation/metrics/core/score-images.py
 git commit -m "Wire effort metric into score-images.py"
 ```
 
@@ -653,7 +653,7 @@ If an `aigi-detector` generation output dir already exists, score it to confirm 
 
 ```bash
 conda activate visualquality
-CUDA_VISIBLE_DEVICES=0 python evaluation/metrics/score-images.py \
+CUDA_VISIBLE_DEVICES=0 python evaluation/metrics/core/score-images.py \
     --output_dir <existing_aigi_output_dir> --metrics effort
 python -c "import json; a=json.load(open('<existing_aigi_output_dir>/average_scores.json')); print({k:a[k] for k in a if k.startswith('effort')})"
 ```

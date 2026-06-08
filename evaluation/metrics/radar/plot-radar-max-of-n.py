@@ -19,7 +19,7 @@ double outer frame; the family name sits in the figure suptitle.
 
 USAGE
 -----
-  python evaluation/metrics/plot-radar-max-of-n.py \
+  python evaluation/metrics/radar/plot-radar-max-of-n.py \
       --max_json plot-radar/max-of-n.json \
       --out plot-radar/max-of-n/radar.png
 
