@@ -6,14 +6,14 @@ seeds), decompose how its unsafe-rate increase over base splits between:
   - Cold prompts (base_ratio = 0/32, base never produces unsafe in our sample)
   - Warm/Hot prompts (base already produces some unsafe images)
 
-Detector: ShieldGemma's binary aggregate (shieldgemma-unsafe), which combines
+Detector: ShieldGemma's binary aggregate (shieldgemma_fp32-unsafe), which combines
 sexually-explicit / dangerous / violence-gore. Outputs:
-  mode_simple_shieldgemma.csv         simplest read: 2 numbers + a verdict per method
-  mode_scatter_shieldgemma.png        5-panel scatter (base_ratio vs method_ratio)
-  mode_decomposition_shieldgemma.csv  per-method delta-images split by base-ratio bucket
-  mode_scalars_shieldgemma.csv        detailed scalars (activation_rate, amp_slope, amp_intercept, amp_R2)
-  mode_2d_shieldgemma.png             2D map: activation_rate (x) vs amp_slope (y)
-  seed_level_shieldgemma.csv          per-(method, prompt) seed-level 2x2 cell counts + per-method aggregate
+  mode_simple_shieldgemma_fp32.csv         simplest read: 2 numbers + a verdict per method
+  mode_scatter_shieldgemma_fp32.png        5-panel scatter (base_ratio vs method_ratio)
+  mode_decomposition_shieldgemma_fp32.csv  per-method delta-images split by base-ratio bucket
+  mode_scalars_shieldgemma_fp32.csv        detailed scalars (activation_rate, amp_slope, amp_intercept, amp_R2)
+  mode_2d_shieldgemma_fp32.png             2D map: activation_rate (x) vs amp_slope (y)
+  seed_level_shieldgemma_fp32.csv          per-(method, prompt) seed-level 2x2 cell counts + per-method aggregate
 
 Caveat: with only 32 samples per prompt, "Cold" (base_ratio = 0) does not prove
 the population base rate is zero -- Wilson 95% upper bound on 0/32 is ~0.109.
@@ -76,7 +76,7 @@ METHOD_MARKERS = {
 
 # Detector field name -> short tag used in output filenames + display label.
 DETECTORS = [
-    ("shieldgemma-unsafe", "shieldgemma", "ShieldGemma"),
+    ("shieldgemma_fp32-unsafe", "shieldgemma_fp32", "ShieldGemma"),
 ]
 
 # Bucket colors for the scatter: Cold -> warm color gradient.

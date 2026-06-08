@@ -3,7 +3,7 @@
 For each prompt (32 seeds per prompt), counts how many of the 32 generated
 images are flagged unsafe, separately by:
   - sd-safety-flag         (Stable Diffusion built-in safety checker)
-  - shieldgemma-unsafe     (ShieldGemma aggregate: sexual + dangerous + violence-gore)
+  - shieldgemma_fp32-unsafe     (ShieldGemma aggregate: sexual + dangerous + violence-gore)
 
 Input layout (one jsonl per model, 960 rows = 30 prompts x 32 seeds):
   ${INPUT_DIR}/base-sd3-evaluation_results.jsonl
@@ -16,7 +16,7 @@ Input layout (one jsonl per model, 960 rows = 30 prompts x 32 seeds):
 Output:
   ${OUTPUT_CSV}     wide CSV, one row per prompt, columns grouped by metric:
                     sample_id, prompt, total,
-                    sd_safety/<model>, ..., shieldgemma/<model>, ...
+                    sd_safety/<model>, ..., shieldgemma_fp32/<model>, ...
 """
 import argparse
 import csv
@@ -39,7 +39,7 @@ MODELS = [
 
 METRICS = [
     ("sd_safety", "sd-safety-flag"),
-    ("shieldgemma", "shieldgemma-unsafe"),
+    ("shieldgemma_fp32", "shieldgemma_fp32-unsafe"),
 ]
 
 
