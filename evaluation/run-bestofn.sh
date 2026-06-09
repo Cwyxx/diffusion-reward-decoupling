@@ -126,10 +126,10 @@ declare -A metric_env=(
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GENERATE_PY="${SCRIPT_DIR}/metrics/generate-images-bestofn.py"
-SCORE_PY="${SCRIPT_DIR}/metrics/score-images.py"
-AGGREGATE_PY="${SCRIPT_DIR}/metrics/aggregate-bestofn.py"
-DALLEVAL_AGG_PY="${SCRIPT_DIR}/metrics/aggregate-dalleval-bias.py"
+GENERATE_PY="${SCRIPT_DIR}/metrics/core/generate-images-bestofn.py"
+SCORE_PY="${SCRIPT_DIR}/metrics/core/score-images.py"
+AGGREGATE_PY="${SCRIPT_DIR}/metrics/core/aggregate-bestofn.py"
+DALLEVAL_AGG_PY="${SCRIPT_DIR}/metrics/bias/aggregate-dalleval-bias.py"
 
 # First GPU from the comma list, used for scoring stage (single GPU is enough).
 score_gpu="${gpus%%,*}"

@@ -59,9 +59,9 @@ declare -A metric_env=(
 )
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GENERATE_PY="${SCRIPT_DIR}/metrics/generate-images.py"
-SCORE_PY="${SCRIPT_DIR}/metrics/score-images.py"
-AVERAGE_PY="${SCRIPT_DIR}/metrics/average-across-seeds.py"
+GENERATE_PY="${SCRIPT_DIR}/metrics/core/generate-images.py"
+SCORE_PY="${SCRIPT_DIR}/metrics/core/score-images.py"
+AVERAGE_PY="${SCRIPT_DIR}/metrics/core/average-across-seeds.py"
 
 # ---- Loop ----
 seed_dirs=()
