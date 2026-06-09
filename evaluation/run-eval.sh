@@ -41,7 +41,7 @@ fi
 
 seed_list=(42 123 456 789 1000)
 case "${dataset}" in
-    unsafe_template|unsafe_4chan|unsafe_lexica)
+    unsafe_template|unsafe_4chan|unsafe_lexica|unsafe_mscoco)
         metric_list=(sd-safety-checker shieldgemma_fp32) ;;
     *)
         metric_list=(pickscore imagereward aesthetic hpsv3 deqa visualquality_r1) ;;

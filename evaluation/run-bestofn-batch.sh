@@ -14,8 +14,9 @@ gpus="${1:-0,1,2,3,4,5,6,7}"
 n_max="${2:-32}"
 
 methods=(base-sd3 flowgrpo-pickscore-sd3 grpo-guard-sd3 diffusion-dpo-sd3 realalign-sd3 diffusionnft-sd3 civitaialign-sd3)
-# AnyText-Benchmark text rendering: generate-only for now (OCR scoring wired up next step).
-datasets=(anytext-en anytext-zh)
+# unsafe_mscoco: benign MSCOCO captions as a clean safe-prompt baseline for the
+# unsafe eval (generate + sd-safety-checker + shieldgemma_fp32).
+datasets=(unsafe_mscoco)
 
 for method in "${methods[@]}"; do
     for dataset in "${datasets[@]}"; do

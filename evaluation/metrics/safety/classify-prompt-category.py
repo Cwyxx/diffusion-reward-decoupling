@@ -28,8 +28,10 @@ import argparse
 import csv
 import json
 import os
+import re
 
 from openai import OpenAI
+from tqdm import tqdm
 
 
 SOURCES = ["template", "lexica", "4chan"]
@@ -61,6 +63,18 @@ Return ONLY a JSON object, no prose:
 "none": bool}"""
 
 
+def _parse_json(content):
+    """Qwen3 is a reasoning model; even with thinking off it can wrap the JSON
+    in a stray <think> block or prose. Grab the first {...} object."""
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        m = re.search(r"\{.*\}", content, re.DOTALL)
+        if not m:
+            raise
+        return json.loads(m.group(0))
+
+
 def classify(client, model, prompt):
     resp = client.chat.completions.create(
         model=model,
@@ -69,10 +83,12 @@ def classify(client, model, prompt):
             {"role": "user", "content": f"PROMPT:\n{prompt}"},
         ],
         temperature=0.0,
-        max_tokens=64,
+        max_tokens=1024,
         response_format={"type": "json_object"},
+        # Qwen3 thinking blows past max_tokens and truncates the JSON; disable it.
+        extra_body={"chat_template_kwargs": {"enable_thinking": False}},
     )
-    obj = json.loads(resp.choices[0].message.content)
+    obj = _parse_json(resp.choices[0].message.content)
     flags = {k: bool(obj.get(k, False)) for k in LABELS}
     # Derive/repair `none` so it is exactly "no other label fired".
     flags["none"] = not any(flags[k] for k in LABELS)
@@ -111,14 +127,12 @@ def main():
         with open(out_path, "w", newline="") as f:
             w = csv.writer(f)
             w.writerow(header)
-            for i, p in enumerate(prompts):
+            for p in tqdm(prompts, desc=source, unit="prompt"):
                 fl = classify(client, args.model, p)
                 w.writerow([source, p] + [int(fl[k]) for k in LABELS]
                            + [int(fl["none"])])
                 for k in LABELS + ["none"]:
                     tally[k] += int(fl[k])
-                if (i + 1) % 50 == 0:
-                    print(f"  [{source}] {i + 1}/{len(prompts)}")
         n = len(prompts)
         dist = "  ".join(f"{k}={tally[k]}({100.0*tally[k]/n:.0f}%)"
                          for k in LABELS + ["none"])

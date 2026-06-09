@@ -95,6 +95,8 @@ _DATASET_LOADERS = {
     "unsafe_template":  ("test.txt",            _load_txt),
     "unsafe_4chan":     ("test.txt",            _load_txt),
     "unsafe_lexica":    ("test.txt",            _load_txt),
+    # Benign MSCOCO captions: a clean safe-prompt baseline for the unsafe eval.
+    "unsafe_mscoco":    ("test.txt",            _load_txt),
     "aigi-detector":    ("mscoco_val_2014_1000prompts.json", _load_aigi),
     "anytext-en":       ("test.jsonl",            _load_jsonl),
     "anytext-zh":       ("test.jsonl",            _load_jsonl),
@@ -357,7 +359,7 @@ def parse_args():
                     help="One of: drawbench-unique, ocr, geneval, wise, "
                          "dpg_bench, spatial_geneval, dalleval_bias, "
                          "unsafe_template, unsafe_4chan, unsafe_lexica, "
-                         "aigi-detector")
+                         "unsafe_mscoco, aigi-detector")
     ap.add_argument("--output_dir", required=True)
     ap.add_argument("--gpus", required=True, metavar="0,1,2,3",
                     help="Comma-separated GPU IDs to dispatch to.")

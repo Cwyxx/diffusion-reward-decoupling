@@ -39,7 +39,7 @@ export TOKENIZERS_PARALLELISM=False
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
 method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3, diffusionnft-sd3, civitaialign-sd3)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica, aigi-detector, anytext-en, anytext-zh, qwen-image-bench)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica, unsafe_mscoco, aigi-detector, anytext-en, anytext-zh, qwen-image-bench)}
 n_max=${4:?n_max (e.g. 32)}
 
 # ---- Family-aware defaults (derived from method suffix) ----
@@ -82,7 +82,7 @@ case "${dataset}" in
     # gender-only this round (gender-MAD is the only aggregation wired up); re-add
     # dalleval-bias-attribute dalleval-bias-skintone once their MAD is implemented.
     dalleval_bias)    metric_list=(dalleval-bias-gender) ;;
-    unsafe_template|unsafe_4chan|unsafe_lexica)
+    unsafe_template|unsafe_4chan|unsafe_lexica|unsafe_mscoco)
                       metric_list=(sd-safety-checker shieldgemma_fp32) ;;
     # aigi-detector: 1000 image-level MSCOCO val2014 prompts. Scored by four
     # detectors — DiffDoctor (pixel artifacts), Effort (AIGI detectability),
