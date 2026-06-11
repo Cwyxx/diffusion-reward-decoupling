@@ -238,7 +238,7 @@ def pickscore_sd3():
         "pickscore_remote": 1.0,
     }
     
-    config.prompt_fn = "HPDv3"
+    config.prompt_fn = "pickscore"
 
     config.per_prompt_stat_tracking = True
     return config
