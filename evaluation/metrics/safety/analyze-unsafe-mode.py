@@ -6,12 +6,12 @@ seeds), decompose how its unsafe-rate increase over base splits between:
   - Cold prompts (base_ratio = 0/32, base never produces unsafe in our sample)
   - Warm/Hot prompts (base already produces some unsafe images)
 
-Detector: ShieldGemma's binary aggregate (shieldgemma_fp16-unsafe), which combines
+Detector: ShieldGemma's binary aggregate (shieldgemma_bf16-unsafe), which combines
 sexually-explicit / dangerous / violence-gore. Outputs:
-  mode_simple_shieldgemma_fp16.csv         simplest read: 2 numbers per method (unsafe rate on Safe vs Unsafe prompts)
-  mode_scatter_shieldgemma_fp16.png        5-panel scatter (base_ratio vs method_ratio)
-  mode_decomposition_shieldgemma_fp16.csv  per-method delta-images split by base-ratio bucket
-  seed_level_shieldgemma_fp16.csv          per-(method, prompt) seed-level 2x2 cell counts + per-method aggregate
+  mode_simple_shieldgemma_bf16.csv         simplest read: 2 numbers per method (unsafe rate on Safe vs Unsafe prompts)
+  mode_scatter_shieldgemma_bf16.png        5-panel scatter (base_ratio vs method_ratio)
+  mode_decomposition_shieldgemma_bf16.csv  per-method delta-images split by base-ratio bucket
+  seed_level_shieldgemma_bf16.csv          per-(method, prompt) seed-level 2x2 cell counts + per-method aggregate
 
 Caveat: with only 32 samples per prompt, "Cold" (base_ratio = 0) does not prove
 the population base rate is zero -- Wilson 95% upper bound on 0/32 is ~0.109.
@@ -60,7 +60,7 @@ METHOD_LABELS = {
 
 # Detector field name -> short tag used in output filenames + display label.
 DETECTORS = [
-    ("shieldgemma_fp16-unsafe", "shieldgemma_fp16", "ShieldGemma"),
+    ("shieldgemma_bf16-unsafe", "shieldgemma_bf16", "ShieldGemma"),
 ]
 
 # Bucket colors for the scatter: Cold -> warm color gradient.

@@ -24,13 +24,13 @@ import torch
 MODEL_ID = "google/shieldgemma-2-4b-it"
 LICENSE_URL = "https://huggingface.co/google/shieldgemma-2-4b-it"
 POLICY_SCORE_KEYS = (
-    "shieldgemma_fp16-sexually-explicit",
-    "shieldgemma_fp16-dangerous",
-    "shieldgemma_fp16-violence-gore",
+    "shieldgemma_bf16-sexually-explicit",
+    "shieldgemma_bf16-dangerous",
+    "shieldgemma_bf16-violence-gore",
 )
 POLICY_PROB_KEYS = tuple(f"{key}-prob" for key in POLICY_SCORE_KEYS)
-UNSAFE_SCORE_KEY = "shieldgemma_fp16-unsafe-score"
-UNSAFE_FLAG_KEY = "shieldgemma_fp16-unsafe"
+UNSAFE_SCORE_KEY = "shieldgemma_bf16-unsafe-score"
+UNSAFE_FLAG_KEY = "shieldgemma_bf16-unsafe"
 
 _model = None
 _processor = None
@@ -43,9 +43,10 @@ def _resolve_device(device: str) -> str:
     return device
 
 
-# Default float16 for speed. The historical "bf16 -> all-NaN" incident was a
-# random-weights overflow artifact (lm_head never loaded, see _load), not a
-# real precision limit; with weights properly tied, half precision is fine.
+# Default bfloat16: as fast as fp16 but with fp32's exponent range. fp16 is
+# verified to overflow Gemma3's large activations into NaN even with weights
+# correctly loaded; the historical "bf16 -> all-NaN" incident, by contrast,
+# was a random-weights artifact (lm_head never loaded, see _load).
 # score_images still hard-fails on any NaN so a silent `int(NaN >= threshold)
 # == 0` -> everything-"safe" run can never happen again. SHIELDGEMMA_DTYPE
 # overrides (fp32 as the numerically-safe fallback).
@@ -59,7 +60,7 @@ _DTYPE_ALIASES = {
 def _resolve_dtype(device: str):
     if not str(device).startswith("cuda"):
         return torch.float32
-    name = os.environ.get("SHIELDGEMMA_DTYPE", "float16").strip().lower()
+    name = os.environ.get("SHIELDGEMMA_DTYPE", "bfloat16").strip().lower()
     if name not in _DTYPE_ALIASES:
         raise ValueError(
             f"SHIELDGEMMA_DTYPE={name!r} not recognized; "

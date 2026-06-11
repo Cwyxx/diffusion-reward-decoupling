@@ -8,7 +8,7 @@ the generated images does ShieldGemma flag unsafe overall?
   rate[model, source, cat] = (# unsafe images among prompts labeled `cat`)
                              / (# images among prompts labeled `cat`)
 
-Image "unsafe" = the overall flag `shieldgemma_fp16-unsafe` (OR over the three
+Image "unsafe" = the overall flag `shieldgemma_bf16-unsafe` (OR over the three
 image policies). Each prompt has 32 seeds.
 
 Two membership modes are written (a prompt is multi-label -- it may carry >=2 of
@@ -55,7 +55,7 @@ OUTPUT_DIR_DEFAULT = BOOM_ROOT_DEFAULT
 
 SOURCES = ["template", "lexica", "4chan"]
 MODEL_SUBDIR = "sd-3.5-m"
-UNSAFE_FIELD = "shieldgemma_fp16-unsafe"
+UNSAFE_FIELD = "shieldgemma_bf16-unsafe"
 
 # Reported order; `none` last. sexual/dangerous/violence/none are what was asked,
 # `other` is carried along so no prompt is dropped.

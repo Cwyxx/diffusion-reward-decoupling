@@ -1,7 +1,7 @@
 """Audit Pick-a-Pic v2 preference pairs for unsafe images with ShieldGemma 2.
 
 For every preference row in the visualization-data dump, this scores the
-`win_image-*.png` and `lose_image-*.png` with the same `shieldgemma_fp16`
+`win_image-*.png` and `lose_image-*.png` with the same `shieldgemma_bf16`
 judge used elsewhere in this repo (google/shieldgemma-2-4b-it, float32 forward,
 unsafe = OR over sexually-explicit / dangerous / violence-gore). It then reports
 whether win/lose images are flagged unsafe and how the two sides of each pair
@@ -21,7 +21,7 @@ Layout assumed (one preference pair per `row_*` directory):
 
 Scoring is sharded across all visible GPUs: one ShieldGemma instance per GPU,
 each pinned to `cuda:<id>`. Per-image verdicts are streamed to
-`shieldgemma_fp16_per_image.jsonl` (one JSON object per line), which makes the
+`shieldgemma_bf16_per_image.jsonl` (one JSON object per line), which makes the
 run resumable -- on restart, images already present in that file are skipped.
 The aggregate report (`summary.json`) is recomputed from the JSONL and can be
 rebuilt without a GPU via `--report-only`.
@@ -55,14 +55,14 @@ DEFAULT_DATA_ROOT = (
     "/data_center/data2/dataset/chenwy/21164-data/dpo_dataset/"
     "pick-a-pic-v2/visualization-data"
 )
-PER_IMAGE_FILENAME = "shieldgemma_fp16_per_image.jsonl"
-SUMMARY_FILENAME = "shieldgemma_fp16_summary.json"
+PER_IMAGE_FILENAME = "shieldgemma_bf16_per_image.jsonl"
+SUMMARY_FILENAME = "shieldgemma_bf16_summary.json"
 
-UNSAFE_FLAG_KEY = "shieldgemma_fp16-unsafe"
+UNSAFE_FLAG_KEY = "shieldgemma_bf16-unsafe"
 POLICY_FLAG_KEYS = (
-    "shieldgemma_fp16-sexually-explicit",
-    "shieldgemma_fp16-dangerous",
-    "shieldgemma_fp16-violence-gore",
+    "shieldgemma_bf16-sexually-explicit",
+    "shieldgemma_bf16-dangerous",
+    "shieldgemma_bf16-violence-gore",
 )
 ROLES = ("win", "lose")
 
@@ -267,7 +267,7 @@ def aggregate(per_image_path: str) -> dict:
     }
 
     return {
-        "detector": "shieldgemma_fp16 (google/shieldgemma-2-4b-it, OR of 3 policies)",
+        "detector": "shieldgemma_bf16 (google/shieldgemma-2-4b-it, OR of 3 policies)",
         "per_role": per_role,
         "pair_level": joint,
     }
@@ -282,7 +282,7 @@ def print_report(summary: dict) -> None:
             f"unsafe={r['unsafe_count']} ({r['unsafe_rate']*100:.2f}%)"
         )
         for k in POLICY_FLAG_KEYS:
-            short = k.replace("shieldgemma_fp16-", "")
+            short = k.replace("shieldgemma_bf16-", "")
             print(
                 f"    {short:<18} {r['policy_counts'][k]:>7}  "
                 f"({r['policy_rates'][k]*100:.2f}%)"
@@ -303,7 +303,7 @@ def main() -> None:
                     help="visualization-data dir containing train-* shards")
     ap.add_argument("--output-dir", default=None,
                     help="where to write JSONL + summary (default: <data-root>/"
-                         "unsafe-shieldgemma_fp16)")
+                         "unsafe-shieldgemma_bf16)")
     ap.add_argument("--num-gpus", type=int, default=8)
     ap.add_argument("--batch-size", type=int,
                     default=int(os.environ.get("SHIELDGEMMA_BATCH_SIZE", "1")))
@@ -315,7 +315,7 @@ def main() -> None:
                     help="skip scoring; just (re)aggregate the existing JSONL")
     args = ap.parse_args()
 
-    out_dir = args.output_dir or os.path.join(args.data_root, "unsafe-shieldgemma_fp16")
+    out_dir = args.output_dir or os.path.join(args.data_root, "unsafe-shieldgemma_bf16")
     os.makedirs(out_dir, exist_ok=True)
     per_image_path = os.path.join(out_dir, PER_IMAGE_FILENAME)
     summary_path = os.path.join(out_dir, SUMMARY_FILENAME)

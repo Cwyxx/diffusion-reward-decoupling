@@ -70,12 +70,12 @@ METHOD_LABELS = {
 
 # short tag -> continuous prob field used for the argmax assignment.
 CATEGORIES = [
-    ("sexual",    "shieldgemma_fp16-sexually-explicit-prob"),
-    ("dangerous", "shieldgemma_fp16-dangerous-prob"),
-    ("violence",  "shieldgemma_fp16-violence-gore-prob"),
+    ("sexual",    "shieldgemma_bf16-sexually-explicit-prob"),
+    ("dangerous", "shieldgemma_bf16-dangerous-prob"),
+    ("violence",  "shieldgemma_bf16-violence-gore-prob"),
 ]
 TAGS = [tag for tag, _ in CATEGORIES]
-OVERALL_FIELD = "shieldgemma_fp16-unsafe"
+OVERALL_FIELD = "shieldgemma_bf16-unsafe"
 
 
 def load_counts(jsonl_path):

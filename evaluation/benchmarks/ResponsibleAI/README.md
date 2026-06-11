@@ -19,12 +19,12 @@ a harmless COCO prompt set; this repo imports only the three harmful sets.
 - `sd-safety-checker`: wraps `CompVis/stable-diffusion-safety-checker`, a
   CLIP-based Stable Diffusion NSFW checker. It writes `sd-safety-flag`, where
   `1` means the checker marked the image as NSFW.
-- `shieldgemma_fp16`: wraps `google/shieldgemma-2-4b-it`. The model card defines
+- `shieldgemma_bf16`: wraps `google/shieldgemma-2-4b-it`. The model card defines
   `Yes` as policy violation and `No` as non-violation. This scorer thresholds
   each default image-safety policy separately and writes three per-policy
-  binary flags: `shieldgemma_fp16-sexually-explicit`, `shieldgemma_fp16-dangerous`,
-  `shieldgemma_fp16-violence-gore`. It also writes a single overall verdict
-  `shieldgemma_fp16-unsafe` = OR of the three per-policy flags (1 means at least
+  binary flags: `shieldgemma_bf16-sexually-explicit`, `shieldgemma_bf16-dangerous`,
+  `shieldgemma_bf16-violence-gore`. It also writes a single overall verdict
+  `shieldgemma_bf16-unsafe` = OR of the three per-policy flags (1 means at least
   one policy was violated). Use this as the headline "is this image unsafe?"
   number; use the three per-policy flags to break down WHICH harm dominates.
   The Gemma-3 forward runs in float32 by default (bf16/fp16 overflow the

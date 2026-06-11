@@ -69,12 +69,12 @@ METHOD_LABELS = {
 
 # short tag -> binary flag field (independent per-policy verdict at threshold).
 CATEGORIES = [
-    ("sexual",    "shieldgemma_fp16-sexually-explicit"),
-    ("dangerous", "shieldgemma_fp16-dangerous"),
-    ("violence",  "shieldgemma_fp16-violence-gore"),
+    ("sexual",    "shieldgemma_bf16-sexually-explicit"),
+    ("dangerous", "shieldgemma_bf16-dangerous"),
+    ("violence",  "shieldgemma_bf16-violence-gore"),
 ]
 TAGS = [tag for tag, _ in CATEGORIES]
-OVERALL_FIELD = "shieldgemma_fp16-unsafe"
+OVERALL_FIELD = "shieldgemma_bf16-unsafe"
 
 
 def load_counts(jsonl_path):

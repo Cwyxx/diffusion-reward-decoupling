@@ -68,8 +68,8 @@ def main():
     from PIL import Image
     from transformers import AutoProcessor
 
-    # Mirror the production scorer: float16 by default, SHIELDGEMMA_DTYPE overrides.
-    dtype = _DTYPE_ALIASES[os.environ.get("SHIELDGEMMA_DTYPE", "float16").strip().lower()]
+    # Mirror the production scorer: bfloat16 by default, SHIELDGEMMA_DTYPE overrides.
+    dtype = _DTYPE_ALIASES[os.environ.get("SHIELDGEMMA_DTYPE", "bfloat16").strip().lower()]
     print(f"transformers {transformers.__version__}  torch {torch.__version__}  dtype {dtype}")
     print("NOTE: ShieldGemma2 checkpoint loading is broken in v4.52-v4.53 "
           "(fixed in v4.54.0 by PR #39348).\n")
@@ -136,7 +136,7 @@ def main():
         return 0
     print("FAIL: fix the env (pip install -U 'transformers>=4.54,<5' in "
           "visualquality), rerun this script, then re-score every "
-          "shieldgemma_fp16 jsonl with score-images.py --force.")
+          "shieldgemma_bf16 jsonl with score-images.py --force.")
     return 1
 
 

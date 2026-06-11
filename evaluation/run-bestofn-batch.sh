@@ -38,7 +38,7 @@ else
 fi
 
 # unsafe_mscoco: benign MSCOCO captions as a clean safe-prompt baseline for the
-# unsafe eval generate + sd-safety-checker + shieldgemma_fp16.
+# unsafe eval generate + sd-safety-checker + shieldgemma_bf16.
 datasets=(unsafe_template unsafe_4chan unsafe_lexica unsafe_mscoco)
 
 echo "Using gpus=${gpus}"
