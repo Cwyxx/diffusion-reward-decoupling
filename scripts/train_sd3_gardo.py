@@ -46,7 +46,7 @@ class TextPromptDataset(Dataset):
         self.file_path = os.path.join(dataset, f'{split}.txt')
         with open(self.file_path, 'r') as f:
             self.prompts = [line.strip() for line in f.readlines()]
-        if split == 'val':
+        if split != 'train':
             self.prompts = self.prompts[:120]
 
     def __len__(self):
@@ -480,11 +480,11 @@ def main(_):
     eval_reward_fn = getattr(flow_grpo.rewards, 'multi_score')(accelerator.device, config.reward_fn)
 
     train_dataset = TextPromptDataset(config.dataset, 'train')
-    test_dataset = TextPromptDataset(config.dataset, 'val')
+    test_dataset = TextPromptDataset(config.dataset, 'test')
 
     # Open pre-computed prompt embeddings (lazy, read on demand)
     train_embed_file = safe_open(os.path.join(config.prompt_embed_dir, "train.safetensors"), framework="pt")
-    test_embed_file = safe_open(os.path.join(config.prompt_embed_dir, "val.safetensors"), framework="pt")
+    test_embed_file = safe_open(os.path.join(config.prompt_embed_dir, "test.safetensors"), framework="pt")
 
     # Load negative prompt embeddings (small, just one row)
     neg_prompt_embed_raw = train_embed_file.get_tensor("neg_prompt_embeds").to(inference_dtype)
