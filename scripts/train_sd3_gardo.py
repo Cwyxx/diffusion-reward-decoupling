@@ -11,7 +11,7 @@ import hashlib
 from absl import app, flags
 from accelerate import Accelerator
 from ml_collections import config_flags
-from accelerate.utils import set_seed, ProjectConfiguration
+from accelerate.utils import set_seed, ProjectConfiguration, DistributedDataParallelKwargs
 from accelerate.logging import get_logger
 from diffusers import StableDiffusion3Pipeline
 from diffusers.utils.torch_utils import is_compiled_module
@@ -361,6 +361,9 @@ def main(_):
         # number of *samples* we accumulate across, so we need to multiply by the number of training timesteps to get
         # the total number of optimizer steps to accumulate across.
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
+        # pos_embed is a frozen 384*384*1536 buffer; broadcasting it on every synced forward
+        # wastes bandwidth and desyncs NCCL when ranks differ in forward count (micro-batching).
+        kwargs_handlers=[DistributedDataParallelKwargs(broadcast_buffers=False)],
     )
     if accelerator.is_main_process:
         swanlab.init(
@@ -882,16 +885,22 @@ def main(_):
         # Get the mask for samples where all advantages are zero across the time dimension
         mask = (samples["advantages"].abs().sum(dim=1) != 0)
 
-        # If the number of True values in mask is not divisible by config.sample.num_batches_per_epoch,
-        # randomly change some False values to True to make it divisible
+        # All ranks must keep the SAME number of samples: with serial micro-batching, the number
+        # of forward/backward passes per training batch (and thus the number of NCCL collectives
+        # on gradient-sync steps) is proportional to the per-rank sample count. Diverging counts
+        # desync the ranks and hang in a collective timeout. Take the max kept count across ranks,
+        # round it up to a multiple of num_batches_per_epoch, and pad every rank up to that target
+        # by flipping random masked-out (zero-advantage) samples back to True.
         num_batches = config.sample.num_batches_per_epoch
         true_count = mask.sum()
-        if true_count % num_batches != 0:
+        global_target = int(accelerator.gather(true_count.unsqueeze(0)).max().item())
+        if global_target % num_batches != 0:
+            global_target += num_batches - (global_target % num_batches)
+        num_to_change = global_target - int(true_count.item())
+        if num_to_change > 0:
             false_indices = torch.where(~mask)[0]
-            num_to_change = num_batches - (true_count % num_batches)
-            if len(false_indices) >= num_to_change:
-                random_indices = torch.randperm(len(false_indices))[:num_to_change]
-                mask[false_indices[random_indices]] = True
+            random_indices = torch.randperm(len(false_indices))[:num_to_change]
+            mask[false_indices[random_indices]] = True
         if accelerator.is_main_process:
             swanlab.log(
                 {
