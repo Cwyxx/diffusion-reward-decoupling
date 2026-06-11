@@ -8,13 +8,14 @@ class PerPromptStatTracker:
         self.stats = {}
         self.history_prompts = set()
 
-    def update(self, prompts, rewards, type='grpo'):
+    def update(self, prompts, rewards, dists=None, type='grpo'):
         """Compute per-prompt normalized advantages.
 
         Args:
             prompts: list of N prompt strings (same prompt appears multiple times due to num_image_per_prompt)
             rewards: (N,) or (N, num_train_timesteps) array of rewards
-            type: 'grpo' | 'rwr' | 'sft' | 'dpo'
+            dists: (N, feat_dim) array of image features (e.g. DINOv3), required for type='gardo'
+            type: 'grpo' | 'gardo' | 'rwr' | 'sft' | 'dpo'
 
         Returns:
             advantages: same shape as rewards, normalized per-prompt (and per-timestep if 2D)
@@ -23,6 +24,9 @@ class PerPromptStatTracker:
         rewards = np.array(rewards, dtype=np.float64)
         unique = np.unique(prompts)
         advantages = np.empty_like(rewards)*0.0
+        if dists is not None and type=='gardo':
+            dists = np.array(dists)
+            dists = dists / np.linalg.norm(dists, ord=2, axis=1, keepdims=True)
         # First pass: accumulate rewards for each prompt
         for prompt in unique:
             prompt_rewards = rewards[prompts == prompt]
@@ -37,6 +41,20 @@ class PerPromptStatTracker:
             prompt_rewards = rewards[prompts == prompt]
             # mean shape: (1,) or (1, num_train_timesteps), per-prompt mean for each timestep
             mean = np.mean(self.stats[prompt], axis=0, keepdims=True)
+            if dists is not None and type=='gardo':
+                # GARDO: diversity weight from the nearest-neighbor cosine distance within the group.
+                # Samples below the group mean keep weight 1; samples above are reweighted by how
+                # "novel" they are relative to the rest of the group.
+                prompt_dists = dists[prompts == prompt]
+                similarity_matrix = np.dot(prompt_dists, prompt_dists.T).clip(-1, 1)
+                distance_matrix = 1 - similarity_matrix
+                avg_distances = np.zeros(len(distance_matrix))
+                for i in range(len(distance_matrix)):
+                    other_mask = np.ones(len(distance_matrix), dtype=bool)
+                    other_mask[i] = False
+                    avg_distances[i] = np.min(distance_matrix[i, other_mask])
+                prompt_dists = np.repeat(avg_distances[:, np.newaxis], prompt_rewards.shape[-1], axis=1)
+                prompt_dists = np.where((prompt_rewards - mean) < 0, np.ones_like(prompt_dists), prompt_dists / np.mean(prompt_dists))
             if self.global_std:
                 # std across ALL samples in this batch (all prompts), per-timestep
                 std = np.std(rewards, axis=0, keepdims=True) + 1e-4
@@ -45,6 +63,9 @@ class PerPromptStatTracker:
                 std = np.std(self.stats[prompt], axis=0, keepdims=True) + 1e-4
             if type=='grpo':
                 advantages[prompts == prompt] = (prompt_rewards - mean) / std
+            elif type=='gardo':
+                # No std normalization: the centered reward is scaled by the diversity weight instead.
+                advantages[prompts == prompt] = (prompt_rewards - mean) * prompt_dists
             elif type=='rwr':
                 # advantages[prompts == prompt] = (prompt_rewards - mean) / std
                 advantages[prompts == prompt] = prompt_rewards
