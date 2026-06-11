@@ -105,6 +105,15 @@ def _load(device: str):
         _model = ShieldGemma2ForImageClassification.from_pretrained(
             MODEL_ID, **load_kwargs
         ).eval()
+        # The checkpoint stores no lm_head (tied to embed_tokens), and the
+        # ShieldGemma2 wrapper's tie_weights() override routes through
+        # language_model -- which has no lm_head after the 4.52 VLM refactor --
+        # so from_pretrained leaves lm_head RANDOMLY INITIALIZED on every 4.5x
+        # release. Untied lm_head = confident-garbage verdicts. Re-tie it.
+        inner = _model.model  # Gemma3ForConditionalGeneration
+        emb = inner.get_input_embeddings()
+        if inner.lm_head.weight.data_ptr() != emb.weight.data_ptr():
+            inner.lm_head.weight = emb.weight
         _model.to(device)
         _processor = AutoProcessor.from_pretrained(MODEL_ID)
     except (GatedRepoError, OSError) as exc:
