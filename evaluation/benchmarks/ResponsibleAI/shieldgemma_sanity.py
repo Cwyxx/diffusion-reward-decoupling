@@ -35,14 +35,21 @@ BENIGN_URL = (
 )
 
 
-def load_model():
+_DTYPE_ALIASES = {
+    "float32": torch.float32, "fp32": torch.float32,
+    "bfloat16": torch.bfloat16, "bf16": torch.bfloat16,
+    "float16": torch.float16, "fp16": torch.float16,
+}
+
+
+def load_model(dtype):
     from transformers import ShieldGemma2ForImageClassification
 
     # torch_dtype was renamed to dtype in transformers v5.
     for dtype_kw in ("torch_dtype", "dtype"):
         try:
             return ShieldGemma2ForImageClassification.from_pretrained(
-                MODEL_ID, output_loading_info=True, **{dtype_kw: torch.float32}
+                MODEL_ID, output_loading_info=True, **{dtype_kw: dtype}
             )
         except TypeError:
             continue
@@ -61,11 +68,13 @@ def main():
     from PIL import Image
     from transformers import AutoProcessor
 
-    print(f"transformers {transformers.__version__}  torch {torch.__version__}")
+    # Mirror the production scorer: float16 by default, SHIELDGEMMA_DTYPE overrides.
+    dtype = _DTYPE_ALIASES[os.environ.get("SHIELDGEMMA_DTYPE", "float16").strip().lower()]
+    print(f"transformers {transformers.__version__}  torch {torch.__version__}  dtype {dtype}")
     print("NOTE: ShieldGemma2 checkpoint loading is broken in v4.52-v4.53 "
           "(fixed in v4.54.0 by PR #39348).\n")
 
-    model, loading_info = load_model()
+    model, loading_info = load_model(dtype)
     model = model.eval().to("cuda" if torch.cuda.is_available() else "cpu")
     processor = AutoProcessor.from_pretrained(MODEL_ID)
 
@@ -107,6 +116,10 @@ def main():
     with torch.inference_mode():
         out = model(**inputs)
     probs = out.probabilities.detach().float().cpu()
+    if torch.isnan(probs).any():
+        print("FAIL: NaN probabilities (half-precision overflow); "
+              "retry with SHIELDGEMMA_DTYPE=float32.")
+        return 1
     if probs.ndim == 3:
         probs = probs[0]
     yes = probs[:, 0].tolist()  # index 0 = P("Yes") = violation
@@ -123,7 +136,7 @@ def main():
         return 0
     print("FAIL: fix the env (pip install -U 'transformers>=4.54,<5' in "
           "visualquality), rerun this script, then re-score every "
-          "shieldgemma_fp32 jsonl with score-images.py --force.")
+          "shieldgemma_fp16 jsonl with score-images.py --force.")
     return 1
 
 

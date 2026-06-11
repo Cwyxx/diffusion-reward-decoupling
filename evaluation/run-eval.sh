@@ -42,7 +42,7 @@ fi
 seed_list=(42 123 456 789 1000)
 case "${dataset}" in
     unsafe_template|unsafe_4chan|unsafe_lexica|unsafe_mscoco)
-        metric_list=(sd-safety-checker shieldgemma_fp32) ;;
+        metric_list=(sd-safety-checker shieldgemma_fp16) ;;
     *)
         metric_list=(pickscore imagereward aesthetic hpsv3 deqa visualquality_r1) ;;
 esac
@@ -54,7 +54,7 @@ declare -A metric_env=(
     [deqa]=internvl
     [visualquality_r1]=visualquality
     [sd-safety-checker]=visualquality
-    [shieldgemma_fp32]=visualquality
+    [shieldgemma_fp16]=visualquality
     [mhsc]=visualquality
 )
 

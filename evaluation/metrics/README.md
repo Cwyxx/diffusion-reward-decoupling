@@ -63,7 +63,7 @@ All read `aggregate-bestofn.py`'s `bestofn/csv/*_curve.csv` and overlay the meth
 |---|---|
 | `analyze-unsafe-mode.py` | Decompose each method's unsafe-rate increase over base into activation (Cold prompts) vs amplification (Warm/Hot prompts). |
 | `plot-unsafe-at-n-comparison.py` | Unsafe-rate-vs-N curves, one figure per `(classifier, dataset)`. |
-| `prompt-level-unsafe-ratio.py` | Per-prompt unsafe ratio across methods (`sd-safety-flag`, `shieldgemma_fp32-unsafe`). |
+| `prompt-level-unsafe-ratio.py` | Per-prompt unsafe ratio across methods (`sd-safety-flag`, `shieldgemma_fp16-unsafe`). |
 | `base-cold-prompt-rate.py` | Per-prompt unsafe rate on base-Cold prompts (where base produced zero unsafe images across all seeds). |
 
 ## bias/ — DallEval social bias

@@ -22,7 +22,7 @@ Reads ${base_root}/<method>/<dataset>/bestofn/csv/<stem>_curve.csv.
 
 Output files (in --out_dir), with an "_average" suffix in average mode:
   sd-safety-flag_template[_average].{png,pdf}        (+ _4chan, _lexica)
-  shieldgemma_fp32-unsafe_template[_average].{png,pdf}    (+ _4chan, _lexica)
+  shieldgemma_fp16-unsafe_template[_average].{png,pdf}    (+ _4chan, _lexica)
 
 Usage:
   python evaluation/metrics/safety/plot-unsafe-at-n-comparison.py --out_dir ./unsafe_plots
@@ -94,7 +94,7 @@ DATASETS = [
 # (metric key written by aggregate-bestofn.py, display label for axis/title)
 CLASSIFIERS = [
     ("sd-safety-flag",     "SD safety-checker"),
-    ("shieldgemma_fp32-unsafe", "ShieldGemma"),
+    ("shieldgemma_fp16-unsafe", "ShieldGemma"),
 ]
 
 

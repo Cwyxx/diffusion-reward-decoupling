@@ -24,13 +24,13 @@ import torch
 MODEL_ID = "google/shieldgemma-2-4b-it"
 LICENSE_URL = "https://huggingface.co/google/shieldgemma-2-4b-it"
 POLICY_SCORE_KEYS = (
-    "shieldgemma_fp32-sexually-explicit",
-    "shieldgemma_fp32-dangerous",
-    "shieldgemma_fp32-violence-gore",
+    "shieldgemma_fp16-sexually-explicit",
+    "shieldgemma_fp16-dangerous",
+    "shieldgemma_fp16-violence-gore",
 )
 POLICY_PROB_KEYS = tuple(f"{key}-prob" for key in POLICY_SCORE_KEYS)
-UNSAFE_SCORE_KEY = "shieldgemma_fp32-unsafe-score"
-UNSAFE_FLAG_KEY = "shieldgemma_fp32-unsafe"
+UNSAFE_SCORE_KEY = "shieldgemma_fp16-unsafe-score"
+UNSAFE_FLAG_KEY = "shieldgemma_fp16-unsafe"
 
 _model = None
 _processor = None
@@ -43,12 +43,12 @@ def _resolve_device(device: str) -> str:
     return device
 
 
-# ShieldGemma 2 is Gemma-3-based; running its forward in bf16/fp16 on cuda
-# overflows the attention logits to inf, so softmax yields all-NaN
-# probabilities (and `int(NaN >= threshold) == 0` then silently marks every
-# image "safe"). Default to float32, which is numerically stable; allow an
-# explicit SHIELDGEMMA_DTYPE override for memory-constrained GPUs that have
-# verified bf16/fp16 produces no NaN on their transformers version.
+# Default float16 for speed. The historical "bf16 -> all-NaN" incident was a
+# random-weights overflow artifact (lm_head never loaded, see _load), not a
+# real precision limit; with weights properly tied, half precision is fine.
+# score_images still hard-fails on any NaN so a silent `int(NaN >= threshold)
+# == 0` -> everything-"safe" run can never happen again. SHIELDGEMMA_DTYPE
+# overrides (fp32 as the numerically-safe fallback).
 _DTYPE_ALIASES = {
     "float32": torch.float32, "fp32": torch.float32,
     "bfloat16": torch.bfloat16, "bf16": torch.bfloat16,
@@ -59,7 +59,7 @@ _DTYPE_ALIASES = {
 def _resolve_dtype(device: str):
     if not str(device).startswith("cuda"):
         return torch.float32
-    name = os.environ.get("SHIELDGEMMA_DTYPE", "float32").strip().lower()
+    name = os.environ.get("SHIELDGEMMA_DTYPE", "float16").strip().lower()
     if name not in _DTYPE_ALIASES:
         raise ValueError(
             f"SHIELDGEMMA_DTYPE={name!r} not recognized; "
@@ -97,8 +97,6 @@ def _load(device: str):
         _exit_setup_error(exc)
 
     try:
-        # float32 default keeps the Gemma3 softmax numerically stable (bf16/fp16
-        # overflow the attention logits to inf -> all-NaN probabilities).
         load_kwargs = {}
         if str(device).startswith("cuda"):
             load_kwargs["torch_dtype"] = _resolve_dtype(device)
@@ -146,6 +144,11 @@ def score_images(
             out = model(**model_inputs)
 
         probs = out.probabilities.detach().float().cpu()
+        if torch.isnan(probs).any():
+            raise RuntimeError(
+                "ShieldGemma produced NaN probabilities (half-precision "
+                "overflow). Re-run with SHIELDGEMMA_DTYPE=float32."
+            )
         # transformers' ShieldGemma2ForImageClassification squeezes the batch
         # dim when batch_size == 1, returning [num_policies, 2] instead of
         # [batch, num_policies, 2]. Normalize both cases to 3D.

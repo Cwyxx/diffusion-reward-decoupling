@@ -52,7 +52,7 @@ if _REPO_ROOT not in sys.path:
 # Metrics whose continuous scores get thresholded into pass/fail for BoN.
 # Everything else uses mean-of-max over the continuous values.
 #
-# sd-safety-flag and shieldgemma_fp32-unsafe are already 0/1 per image, so
+# sd-safety-flag and shieldgemma_fp16-unsafe are already 0/1 per image, so
 # pass@N with threshold=1.0 over them is exactly unsafe@N: the fraction
 # of prompts for which at least one of the first N seeds is flagged
 # unsafe. The per-prompt jsonl lists prompts that produced at least one
@@ -60,7 +60,7 @@ if _REPO_ROOT not in sys.path:
 # generic binary path.
 # anytext-senacc is a per-image fraction of GT text lines rendered exactly right;
 # pass@N with threshold=1.0 = "at least one of N seeds got every text line correct".
-BINARY_METRICS = {"ocr", "geneval", "sd-safety-flag", "shieldgemma_fp32-unsafe", "anytext-senacc"}
+BINARY_METRICS = {"ocr", "geneval", "sd-safety-flag", "shieldgemma_fp16-unsafe", "anytext-senacc"}
 
 # Metrics that ALSO get a continuous mean-of-max view alongside the binary
 # pass@N view. Useful for OCR where the underlying score is a continuous
@@ -79,7 +79,7 @@ DUAL_METRICS = {"ocr", "anytext-senacc"}
 # probability that AT LEAST ONE of n samples is unsafe. The average view is
 # budget-independent (flat in n in expectation), so it compares the per-image
 # unsafe rate across methods fairly without sampling-budget amplification.
-AVERAGE_METRICS = {"sd-safety-flag", "shieldgemma_fp32-unsafe"}
+AVERAGE_METRICS = {"sd-safety-flag", "shieldgemma_fp16-unsafe"}
 
 # DPG-Bench's reportable "Average DPG-Score" averages a fixed number of
 # images per prompt. The ELLA official protocol uses 4 (a 2x2 grid); we

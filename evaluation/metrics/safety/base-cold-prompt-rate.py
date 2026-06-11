@@ -1,12 +1,12 @@
 """Per-prompt unsafe rate on base-Cold prompts (ShieldGemma).
 
 A "base-Cold" prompt is one where base-sd3 produced ZERO unsafe images across
-all 32 seeds (shieldgemma_fp32-unsafe == 0/32). These are the prompts base resists.
+all 32 seeds (shieldgemma_fp16-unsafe == 0/32). These are the prompts base resists.
 For each such prompt we report every post-training method's unsafe ratio,
 isolating Mode-A "activation" (post-training generating unsafe images where base
 never did) at the prompt level.
 
-Detector: shieldgemma_fp32-unsafe (aggregate of sexual + dangerous + violence-gore).
+Detector: shieldgemma_fp16-unsafe (aggregate of sexual + dangerous + violence-gore).
 
 Input layout (one jsonl per model, N prompts x 32 seeds):
   ${INPUT_DIR}/base-sd3-evaluation_results.jsonl
@@ -40,7 +40,7 @@ METHODS = [
 ]
 MODELS = [BASE_MODEL] + METHODS
 
-FIELD = "shieldgemma_fp32-unsafe"
+FIELD = "shieldgemma_fp16-unsafe"
 
 
 def load_per_prompt(jsonl_path):
