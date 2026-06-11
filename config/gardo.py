@@ -32,6 +32,7 @@ def pickscore_sd3_gardo():
 
     config.run_name = "pickscore-gardo"
     config.save_dir = f'/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/flow-grpo/sd-3-5-medium/model-ckpt/{config.run_name}'
+    config.prompt_embed_dir = "/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling/prompt-embedding/pickscore"
     return config
 
 
