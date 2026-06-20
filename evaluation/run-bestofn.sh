@@ -38,7 +38,7 @@ export TOKENIZERS_PARALLELISM=False
 
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
-method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3, diffusionnft-sd3, civitaialign-sd3)}
+method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3, diffusionnft-sd3, civitaialign-sd3, flow-opd-sd3, gardo-pickscore-sd3)}
 dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica, unsafe_mscoco, aigi-detector, anytext-en, anytext-zh, qwen-image-bench)}
 n_max=${4:?n_max (e.g. 32)}
 

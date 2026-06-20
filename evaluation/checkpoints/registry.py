@@ -101,6 +101,14 @@ REGISTRY: Dict[str, CheckpointRecipe] = {
         method="civitaialign-sd3", base_model_id=SD35M, load_kind="peft_lora",
         repo_id=f"{SD35M_LORA_ROOT}/CivitaiAlign",
     ),
+    "flow-opd-sd3": CheckpointRecipe(
+        method="flow-opd-sd3", base_model_id=SD35M, load_kind="peft_lora",
+        repo_id=f"{SD35M_LORA_ROOT}/Flow-OPD",
+    ),
+    "gardo-pickscore-sd3": CheckpointRecipe(
+        method="gardo-pickscore-sd3", base_model_id=SD35M, load_kind="peft_lora",
+        repo_id=f"{SD35M_LORA_ROOT}/GARDO-PickScore",
+    ),
 }
 
 

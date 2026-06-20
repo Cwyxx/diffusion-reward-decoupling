@@ -354,7 +354,7 @@ def parse_args():
                          "SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl. "
                          "SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, "
                          "diffusion-dpo-sd3, realalign-sd3, diffusionnft-sd3, "
-                         "civitaialign-sd3.")
+                         "civitaialign-sd3, flow-opd-sd3, gardo-pickscore-sd3.")
     ap.add_argument("--dataset", required=True,
                     help="One of: drawbench-unique, ocr, geneval, wise, "
                          "dpg_bench, spatial_geneval, dalleval_bias, "

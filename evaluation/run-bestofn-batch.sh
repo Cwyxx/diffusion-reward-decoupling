@@ -9,10 +9,17 @@
 #   bash evaluation/run-bestofn-batch.sh 0,1,2,3 32 base-sd3
 #   bash evaluation/run-bestofn-batch.sh 0,1,2,3 32 base-sd3 flowgrpo-pickscore-sd3 grpo-guard-sd3
 #
+#   # Two new LoRA methods over the full 10-benchmark suite:
+#   DATASETS="drawbench-unique geneval wise dpg_bench dalleval_bias \
+#             unsafe_template unsafe_4chan unsafe_lexica aigi-detector anytext-en" \
+#     bash evaluation/run-bestofn-batch.sh 0,1,2,3,4,5,6,7 32 flow-opd-sd3 gardo-pickscore-sd3
+#
 # Defaults:
 #   gpus=0,1,2,3,4,5,6,7
 #   n_max=32
 #   methods=base-sd3 flowgrpo-pickscore-sd3 grpo-guard-sd3 diffusion-dpo-sd3 realalign-sd3 diffusionnft-sd3 civitaialign-sd3
+#   datasets=unsafe_template unsafe_4chan unsafe_lexica unsafe_mscoco
+#            (override via DATASETS env var, space-separated)
 
 set -eo pipefail
 
@@ -39,7 +46,13 @@ fi
 
 # unsafe_mscoco: benign MSCOCO captions as a clean safe-prompt baseline for the
 # unsafe eval generate + sd-safety-checker + shieldgemma_bf16.
-datasets=(unsafe_template unsafe_4chan unsafe_lexica unsafe_mscoco)
+# Override the dataset list via the DATASETS env var (space-separated), e.g.
+#   DATASETS="drawbench-unique geneval wise ..." bash run-bestofn-batch.sh ...
+if [ -n "${DATASETS:-}" ]; then
+    read -r -a datasets <<< "${DATASETS}"
+else
+    datasets=(unsafe_template unsafe_4chan unsafe_lexica unsafe_mscoco)
+fi
 
 echo "Using gpus=${gpus}"
 echo "Using n_max=${n_max}"
