@@ -1,27 +1,26 @@
-"""Plot WISE Best-of-N curves comparing SD-3.5-M methods, one figure per category.
+"""Plot a 1x4 capability overview of Best-of-N curves for the paper.
 
-Reads ${base_root}/<method>/wise/bestofn/csv/wise_<CATEGORY>_curve.csv
-(and wise_curve.csv for the weighted Overall) and saves a separate PNG (+ PDF)
-per WISE category into --out_dir, with the methods overlaid on each plot.
+One subplot per capability axis, styled identically to
+plot-bestofn-wise-comparison.py's plot_panels (portrait panels, categorical
+x-axis with EQUAL marker spacing, per-method color/marker, legend inside the
+GenEval subplot, title fontsize 15, y formatted to 2 decimals):
 
-The per-category and overall CSVs are produced by
-evaluation/metrics/core/aggregate-bestofn.py (_aggregate_wise). Categories follow
-evaluation/benchmarks/WISE/calculate_verified.py:65-79; Overall uses the
-weighted formula at calculate_verified.py:246
-(0.40·CULTURE + 0.12·each of TIME/SPACE/BIOLOGY/PHYSICS/CHEMISTRY).
+  1. Human Preference  -> drawbench-unique / pickscore_curve.csv       (PickScore)
+  2. GenEval           -> geneval          / geneval_curve.csv        (macro-avg)
+  3. DPG-Bench         -> dpg_bench        / dpg-score-mplug_curve.csv (mPLUG, x100)
+  4. WISE              -> wise             / wise_curve.csv            (weighted)
+
+Each curve is read from
+  ${base_root}/<method>/<dataset>/bestofn/csv/<csv_name>
+(produced by evaluation/metrics/core/aggregate-bestofn.py). Methods without a
+given curve are skipped with a warning, so methods missing from a benchmark
+(e.g. DPG has no DiffusionNFT/CivitaiAlign) just drop out of that panel.
 
 Output files (in --out_dir):
-  culture.png / .pdf
-  time.png / .pdf
-  space.png / .pdf
-  biology.png / .pdf
-  physics.png / .pdf
-  chemistry.png / .pdf
-  overall.png / .pdf
-  wise_panels.png / .pdf   (the 6 per-category curves in a 2x3 grid, for the paper)
+  capability_panels.png / .pdf
 
 Usage:
-  python evaluation/metrics/capability/plot-bestofn-wise-comparison.py --out_dir ./wise_plots
+  python evaluation/metrics/capability/plot-bestofn-capability-comparison.py --out_dir ./capability_plots
 """
 import argparse
 import csv
@@ -104,31 +103,18 @@ X_TICKS = [1, 8, 16, 24, 32]
 # Map each N to its equally-spaced index position.
 N_TO_POS = {n: i for i, n in enumerate(PLOT_NS)}
 
-# (display_label, csv_filename, output_stem). csv_filename matches the names
-# written by aggregate-bestofn.py:_aggregate_wise.
-CATEGORIES = [
-    ("Culture",   "wise_CULTURE_curve.csv",   "culture"),
-    ("Time",      "wise_TIME_curve.csv",      "time"),
-    ("Space",     "wise_SPACE_curve.csv",     "space"),
-    ("Biology",   "wise_BIOLOGY_curve.csv",   "biology"),
-    ("Physics",   "wise_PHYSICS_curve.csv",   "physics"),
-    ("Chemistry", "wise_CHEMISTRY_curve.csv", "chemistry"),
-    ("Overall (weighted)", "wise_curve.csv",  "overall"),
-]
-
-# The 6 per-category panels laid out in a 2x3 grid for the paper.
-PANEL_CATEGORIES = [
-    ("Culture",   "wise_CULTURE_curve.csv",   "culture"),
-    ("Time",      "wise_TIME_curve.csv",      "time"),
-    ("Space",     "wise_SPACE_curve.csv",     "space"),
-    ("Biology",   "wise_BIOLOGY_curve.csv",   "biology"),
-    ("Physics",   "wise_PHYSICS_curve.csv",   "physics"),
-    ("Chemistry", "wise_CHEMISTRY_curve.csv", "chemistry"),
+# (title, dataset_subdir, csv_filename, y_scale, y_fmt). One per panel, left to
+# right. y_scale rescales the stored 0..1 value (DPG-Bench is reported 0..100).
+PANELS = [
+    ("Human Preference", "drawbench-unique", "pickscore_curve.csv",       1.0,   "%.2f"),
+    ("GenEval",          "geneval",          "geneval_curve.csv",        1.0,   "%.2f"),
+    ("DPG-Bench",        "dpg_bench",         "dpg-score-mplug_curve.csv", 100.0, "%.1f"),
+    ("WISE",             "wise",             "wise_curve.csv",           1.0,   "%.2f"),
 ]
 
 
-def load_curve(base_root, method, csv_name):
-    path = os.path.join(base_root, method, "wise", "bestofn", "csv", csv_name)
+def load_curve(base_root, method, dataset, csv_name):
+    path = os.path.join(base_root, method, dataset, "bestofn", "csv", csv_name)
     ns, ys = [], []
     with open(path) as f:
         reader = csv.reader(f)
@@ -139,66 +125,21 @@ def load_curve(base_root, method, csv_name):
     return np.array(ns), np.array(ys)
 
 
-def plot_one(label, csv_name, stem, base_root, out_dir):
-    fig, ax = plt.subplots(figsize=(5.6, 4.0), constrained_layout=True)
-
-    for method in METHODS:
-        try:
-            ns, ys = load_curve(base_root, method, csv_name)
-        except FileNotFoundError as e:
-            print(f"[warn] missing {e.filename}", file=sys.stderr)
-            continue
-        keep = np.isin(ns, PLOT_NS)
-        ns, ys = ns[keep], ys[keep]
-        xs = [N_TO_POS[n] for n in ns]
-        ax.plot(
-            xs, ys,
-            marker=METHOD_MARKERS[method],
-            color=METHOD_COLORS[method],
-            linestyle=METHOD_LINESTYLES[method],
-            label=METHOD_LABELS[method],
-            zorder=5 if method == "base-sd3" else 3,
-        )
-
-    ax.set_xlabel("Number of Samples N")
-    ax.set_ylabel("WISE Best@N")
-    ax.set_title(label)
-    ax.set_xticks([N_TO_POS[t] for t in X_TICKS])
-    ax.set_xticklabels([str(t) for t in X_TICKS])
-    ax.set_xlim(-0.5, len(PLOT_NS) - 0.5)
-    ax.yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
-    ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.6)
-    ax.legend(
-        loc='lower right',
-        frameon=True,
-        framealpha=0.9,
-        edgecolor='#dddddd',
-        fontsize=10,
-    )
-
-    png_path = os.path.join(out_dir, f"{stem}.png")
-    pdf_path = os.path.join(out_dir, f"{stem}.pdf")
-    fig.savefig(png_path, dpi=300, bbox_inches='tight')
-    fig.savefig(pdf_path, dpi=300, bbox_inches='tight')
-    plt.close(fig)
-    print(f"saved {png_path} and {pdf_path}")
-
-
-def plot_panels(categories, base_root, out_dir, stem="wise_panels"):
-    """Plot the given categories in a 2x3 grid with the legend inside the
-    first subplot, for inclusion in the paper."""
-    nrow, ncol = 1, 6
+def plot_panels(panels, base_root, out_dir, stem="capability_panels"):
+    """Plot the given panels in a 1xN row with the legend inside the third
+    subplot, for inclusion in the paper."""
+    nrow, ncol = 1, len(panels)
     fig, axes = plt.subplots(
         nrow, ncol,
         figsize=(3.5 * ncol, 4.0 * nrow),
         constrained_layout=True,
     )
-    axes = axes.flatten()
+    axes = np.atleast_1d(axes).flatten()
 
-    for i, (ax, (label, csv_name, _stem)) in enumerate(zip(axes, categories)):
+    for i, (ax, (label, dataset, csv_name, y_scale, y_fmt)) in enumerate(zip(axes, panels)):
         for method in METHODS:
             try:
-                ns, ys = load_curve(base_root, method, csv_name)
+                ns, ys = load_curve(base_root, method, dataset, csv_name)
             except FileNotFoundError as e:
                 print(f"[warn] missing {e.filename}", file=sys.stderr)
                 continue
@@ -206,7 +147,7 @@ def plot_panels(categories, base_root, out_dir, stem="wise_panels"):
             ns, ys = ns[keep], ys[keep]
             xs = [N_TO_POS[n] for n in ns]
             ax.plot(
-                xs, ys,
+                xs, ys * y_scale,
                 marker=METHOD_MARKERS[method],
                 color=METHOD_COLORS[method],
                 linestyle=METHOD_LINESTYLES[method],
@@ -219,14 +160,15 @@ def plot_panels(categories, base_root, out_dir, stem="wise_panels"):
         ax.set_xticks([N_TO_POS[t] for t in X_TICKS])
         ax.set_xticklabels([str(t) for t in X_TICKS])
         ax.set_xlim(-0.5, len(PLOT_NS) - 0.5)
-        ax.yaxis.set_major_formatter(FormatStrFormatter("%.2f"))
+        ax.yaxis.set_major_formatter(FormatStrFormatter(y_fmt))
         ax.grid(True, alpha=0.3, linestyle="--", linewidth=0.6)
-        if i // ncol == nrow - 1:           # bottom row
-            ax.set_xlabel("Number of Samples N")
-        if i % ncol == 0:                   # left column
+        ax.set_xlabel("Number of Samples N")  # 1 row -> every panel is bottom row
+        if i == 0:                            # left column
             ax.set_ylabel("Best@N")
 
-    axes[0].legend(
+    # Legend on the GenEval panel (index 1): a panel with the full method set,
+    # since DPG-Bench may be missing some methods and would give a partial legend.
+    axes[1].legend(
         loc="lower right",
         frameon=True,
         framealpha=0.9,
@@ -237,7 +179,7 @@ def plot_panels(categories, base_root, out_dir, stem="wise_panels"):
     png_path = os.path.join(out_dir, f"{stem}.png")
     pdf_path = os.path.join(out_dir, f"{stem}.pdf")
     fig.savefig(png_path, dpi=300, bbox_inches="tight")
-    fig.savefig(pdf_path, dpi=300, bbox_inches="tight")
+    fig.savefig(pdf_path, bbox_inches="tight")
     plt.close(fig)
     print(f"saved {png_path} and {pdf_path}")
 
@@ -258,23 +200,21 @@ def main(args):
     })
 
     os.makedirs(args.out_dir, exist_ok=True)
-    for label, csv_name, stem in CATEGORIES:
-        plot_one(label, csv_name, stem, args.base_root, args.out_dir)
-    # Combined 1-row panel of the 6 per-category curves for the paper.
-    plot_panels(PANEL_CATEGORIES, args.base_root, args.out_dir)
+    plot_panels(PANELS, args.base_root, args.out_dir)
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(
-        description="Plot WISE BoN comparison across SD-3.5-M methods, "
-                    "one figure per category (+ Overall).",
+        description="Plot a 1x4 capability overview (Human Preference, GenEval, "
+                    "DPG-Bench, WISE) of BoN curves across "
+                    "SD-3.5-M methods, styled like the WISE/GenEval panels.",
     )
     ap.add_argument(
         "--base_root", default=DEFAULT_BASE_ROOT,
         help=f"default: {DEFAULT_BASE_ROOT}",
     )
     ap.add_argument(
-        "--out_dir", default="bestofn_wise_plots",
-        help="Directory to write per-category PNG + PDF files into.",
+        "--out_dir", default="bestofn_capability_plots",
+        help="Directory to write capability_panels.png + .pdf into.",
     )
     main(ap.parse_args())

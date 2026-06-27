@@ -3,14 +3,14 @@
 
 """Paper-style Best-of-N capability radar (max-of-n.json).
 
-Renders a 2x3 grid of radars (one per N in 1/2/4/8/16/32) over 6 axes. The top
+Renders a 2x3 grid of radars (one per N in 1/2/4/8/16/32) over 5 axes. The top
 half holds Qwen-Image-Bench / WISE / DPG-Bench, the bottom half GenEval /
-Human Preference / AnyText. Qwen-Image-Bench has no experiment results yet, so
+Human Preference. Qwen-Image-Bench has no experiment results yet, so
 it is drawn as an **empty axis** (the axis label shows, but no method has a
 vertex there) — fill it in later by wiring a data source in ``AXIS_SOURCES``.
 
-Each panel uses **rank layering**: on every axis the 6 methods are snapped to 6
-fixed concentric rings by their rank (rank 1 = best = outer ring, rank 6 = worst
+Each panel uses **rank layering**: on every axis the 9 methods are snapped to 9
+fixed concentric rings by their rank (rank 1 = best = outer ring, rank 9 = worst
 = inner ring), so the relative ordering is immediately legible and no two
 methods overlap on an axis. The absolute "growth with N" is intentionally
 dropped (every panel fills the same rings — only the ordering shifts across
@@ -19,13 +19,13 @@ double outer frame; the family name sits in the figure suptitle.
 
 USAGE
 -----
-  python evaluation/metrics/radar/plot-radar-max-of-n.py \
+  python3 evaluation/metrics/radar/plot-radar-max-of-n.py \
       --max_json plot-radar/max-of-n.json \
       --out plot-radar/max-of-n/radar.png
 
 ``max-of-n.json`` (collect-max-of-n-metrics.py) supplies the capability axes
 (collector axis order "Object Alignment / Dense Prompt / World Knowledge /
-Visual Text"). With no --max_json the script renders built-in demo values.
+Human Preference"). With no --max_json the script renders built-in demo values.
 
 FONT
 ----
@@ -53,7 +53,7 @@ R_MIN = 0.1
 
 # ---- axes (clockwise from top); first TOP_COUNT are centred at the top -----
 AXES = ["Qwen-Image-Bench", "WISE", "DPG-Bench",     # top half
-        "GenEval", "Human Preference", "AnyText"]    # bottom half
+        "GenEval", "Human Preference"]               # bottom half
 TOP_COUNT = 3
 # Per-axis data source: (collector_axis) in max-of-n.json, or None for a
 # placeholder (empty) axis whose label still shows but carries no data.
@@ -63,28 +63,34 @@ AXIS_SOURCES = [
     "Dense Prompt",       # DPG-Bench
     "Object Alignment",   # GenEval
     "Human Preference",   # Human Preference
-    "Visual Text",        # AnyText
 ]
 
-# ---- the 6 methods (display order = legend order) --------------------------
-METHODS = ["Base", "Flow-GRPO", "GRPO-Guard", "DiffusionNFT", "Diffusion-DPO", "RealAlign"]
+# ---- the 9 methods (display order = legend order) --------------------------
+METHODS = ["Base", "Flow-GRPO", "GRPO-Guard", "DiffusionNFT", "Diffusion-DPO",
+           "RealAlign", "CivitaiAlign", "GARDO-PickScore", "Flow-OPD"]
 FOCUS_METHOD = "Base"  # drawn on the topmost layer (z-order only)
 
 METHOD_COLORS = {
-    "Base":          "#00A087",
-    "Flow-GRPO":     "#E64B35",
-    "GRPO-Guard":    "#4DBBD5",
-    "DiffusionNFT":  "#7F7F7F",
-    "Diffusion-DPO": "#3C5488",
-    "RealAlign":     "#F39B7F",
+    "Base":            "#00A087",
+    "Flow-GRPO":       "#E64B35",
+    "GRPO-Guard":      "#4DBBD5",
+    "DiffusionNFT":    "#7F7F7F",
+    "Diffusion-DPO":   "#3C5488",
+    "RealAlign":       "#F39B7F",
+    "CivitaiAlign":    "#9467BD",
+    "GARDO-PickScore": "#E377C2",
+    "Flow-OPD":        "#8C564B",
 }
 METHOD_STYLES = {
-    "Base":          ("-",                  "o"),
-    "Flow-GRPO":     ((0, (5, 2)),          "s"),
-    "GRPO-Guard":    ((0, (1, 1.4)),        "^"),
-    "DiffusionNFT":  ((0, (6, 2, 1, 2)),    "D"),
-    "Diffusion-DPO": ((0, (3, 1.6)),        "v"),
-    "RealAlign":     ("-.",                 "P"),
+    "Base":            ("-",                   "o"),
+    "Flow-GRPO":       ((0, (5, 2)),           "s"),
+    "GRPO-Guard":      ((0, (1, 1.4)),         "^"),
+    "DiffusionNFT":    ((0, (6, 2, 1, 2)),     "D"),
+    "Diffusion-DPO":   ((0, (3, 1.6)),         "v"),
+    "RealAlign":       ("-.",                  "P"),
+    "CivitaiAlign":    ((0, (4, 1.5, 1, 1.5)), "X"),
+    "GARDO-PickScore": ((0, (2, 1, 1, 1)),     "*"),
+    "Flow-OPD":        ((0, (5, 1)),           "h"),
 }
 SECTOR_PALETTE = [
     "#A8D0E6", "#A8D8C4", "#BFE3B0", "#E6D6A8",
@@ -97,6 +103,9 @@ METHOD_DIR_TO_NAME = {
     "diffusionnft-sd3": "DiffusionNFT",
     "diffusion-dpo-sd3": "Diffusion-DPO",
     "realalign-sd3": "RealAlign",
+    "civitaialign-sd3": "CivitaiAlign",
+    "gardo-pickscore-sd3": "GARDO-PickScore",
+    "flow-opd-sd3": "Flow-OPD",
 }
 
 
@@ -114,7 +123,7 @@ def setup_font(preferred="Intern"):
 
 
 def _demo_data(n_axes):
-    """Plausible 0..1 values (n_axes x 6 methods) for offline style checks."""
+    """Plausible 0..1 values (n_axes x 9 methods) for offline style checks."""
     rng = np.random.default_rng(7)
     return {m: list(np.clip(rng.uniform(0.35, 0.95, n_axes), 0, 1)) for m in METHODS}
 
@@ -249,7 +258,7 @@ def _draw_radar(ax, fig, data, title=None,
     grid_kw = dict(color="#BFBFBF", lw=0.8, ls=(0, (4, 4)), zorder=1)
     circle_theta = np.linspace(0, 2 * np.pi, 200)
 
-    # one ring per rank: rank 1 (best) on the outer ring, rank 6 (worst) inner
+    # one ring per rank: rank 1 (best) on the outer ring, rank 9 (worst) inner
     ring_r = list(np.linspace(R_DATA, R_MIN, len(METHODS)))
     ring_lab = [str(i + 1) for i in range(len(METHODS))]
 
@@ -343,7 +352,7 @@ def main(args):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(
-        description="Best-of-N capability radar grid (max-of-n.json), 6 methods."
+        description="Best-of-N capability radar grid (max-of-n.json), 9 methods."
     )
     ap.add_argument("--max_json", default=None,
                     help="max-of-n.json from collect-max-of-n-metrics.py.")

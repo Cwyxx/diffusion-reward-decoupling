@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Collect five capability radar-chart metrics (max@N / Best-of-N) per method.
+"""Collect four capability radar-chart metrics (max@N / Best-of-N) per method.
 
 Sibling of ``collect-mean-of-n-metrics.py``. Where that script averages over the
 first N samples (per-image rates / bias / safety), this one takes the *max* over
@@ -9,7 +9,7 @@ the first N samples per prompt (the Best-of-N capability ceiling), then averages
 over prompts. It reads the per-(method, dataset) ``evaluation_results.jsonl``
 produced by ``score-images.py`` under
 ``<base_root>/<bestofn_subdir>/<family>/<method>/<dataset>/`` and computes, for
-every N in ``--n_list``, the five metrics:
+every N in ``--n_list``, the four metrics:
 
   Object Alignment : GenEval Overall = macro-avg over the 6 GenEval tags of
                      pass@N (any of the first N samples scores geneval==1).
@@ -21,13 +21,9 @@ every N in ``--n_list``, the five metrics:
                      (CULTURE 0.40, others 0.12) of pass@N (any of first N
                      samples scores wise==1). dataset=wise, score_key=wise.
                      Higher = better.
-  Visual Text      : AnyText (English) Best-of-N = mean over prompts of max over
-                     the first N samples of anytext-senacc (Sen.ACC, the AnyText
-                     headline). dataset=anytext-en, score_key=anytext-senacc.
-                     Higher = better.
-  Human Preference : HPSv3 Best-of-N = mean over prompts of max over the first N
-                     samples of hpsv3. dataset=drawbench-unique, score_key=hpsv3.
-                     Higher = better.
+  Human Preference : PickScore Best-of-N = mean over prompts of max over the
+                     first N samples of pickscore. dataset=drawbench-unique,
+                     score_key=pickscore. Higher = better.
 
 max@N convention: per prompt take the first N samples (seed_index 0..N-1), take
 the max of the per-image metric (or "did any pass" for the binary GenEval/WISE
@@ -43,15 +39,15 @@ generated and scored by run-bestofn(-batch).sh. It never touches a GPU.
 Output: ``<output_dir>/max-of-n.json`` with::
 
   {
-    "metrics": ["Object Alignment", "Dense Prompt", "World Knowledge", "Visual Text"],
+    "metrics": ["Object Alignment", "Dense Prompt", "World Knowledge", "Human Preference"],
     "n_list": [1, 2, 4, 8, 16, 32],
     "data":    { method: { metric: { "1": value, "2": value, ... } } },
-    "vectors": { method: { "1": [Obj, Dense, World, Text, HumanPref], ... } },
+    "vectors": { method: { "1": [Obj, Dense, World, HumanPref], ... } },
     "config":  { ... provenance ... }
   }
 
 ``data`` is convenient for per-metric reads; ``vectors`` gives each method's
-5-axis radar vector at every N. A missing value (dataset not scored yet) is
+4-axis radar vector at every N. A missing value (dataset not scored yet) is
 ``null``; the script warns and keeps going so a partial run is still useful.
 """
 import argparse
@@ -63,7 +59,7 @@ import numpy as np
 
 # Radar axes, in the order they appear in each method's `vectors` entry.
 METRIC_ORDER = [
-    "Object Alignment", "Dense Prompt", "World Knowledge", "Visual Text", "Human Preference"
+    "Object Alignment", "Dense Prompt", "World Knowledge", "Human Preference"
 ]
 
 DEFAULT_METHODS = [
@@ -73,6 +69,9 @@ DEFAULT_METHODS = [
     "diffusionnft-sd3",
     "diffusion-dpo-sd3",
     "realalign-sd3",
+    "civitaialign-sd3",
+    "gardo-pickscore-sd3",
+    "flow-opd-sd3",
 ]
 
 DEFAULT_BASE_ROOT = "/data_center/data2/dataset/chenwy/21164-data/diffusion-reward-decoupling"
@@ -84,10 +83,8 @@ DPG_DATASET = "dpg_bench"
 DPG_KEY = "dpg-score-mplug"
 WISE_DATASET = "wise"
 WISE_KEY = "wise"
-ANYTEXT_DATASET = "anytext-en"
-ANYTEXT_KEY = "anytext-senacc"
-HPSV3_DATASET = "drawbench-unique"
-HPSV3_KEY = "hpsv3"
+PICKSCORE_DATASET = "drawbench-unique"
+PICKSCORE_KEY = "pickscore"
 
 # The 6 GenEval dimensions, matching aggregate-bestofn.py:GENEVAL_TAGS and the
 # official summary_scores.py grouping. GenEval Overall = macro-avg over these.
@@ -239,8 +236,7 @@ def compute_method(method, base_root, bestofn_subdir, family, n_list):
     geneval_rows = load(GENEVAL_DATASET)
     dpg_rows = load(DPG_DATASET)
     wise_rows = load(WISE_DATASET)
-    anytext_rows = load(ANYTEXT_DATASET)
-    hpsv3_rows = load(HPSV3_DATASET)
+    pickscore_rows = load(PICKSCORE_DATASET)
 
     data = {m: {} for m in METRIC_ORDER}
     for n in n_list:
@@ -271,23 +267,14 @@ def compute_method(method, base_root, bestofn_subdir, family, n_list):
             if val is None:
                 warnings.append(f"[{method}] wise Overall unavailable at n={n}: {detail}")
 
-        # Visual Text (AnyText-EN Best-of-N, continuous max@N on Sen.ACC)
-        if anytext_rows is None:
-            data["Visual Text"][n] = None
-        else:
-            val, _ = max_at_n(anytext_rows, ANYTEXT_KEY, n)
-            data["Visual Text"][n] = val
-            if val is None:
-                warnings.append(f"[{method}] anytext-en: no '{ANYTEXT_KEY}' scores at n={n}")
-
-        # Human Preference (HPSv3 Best-of-N, continuous max@N)
-        if hpsv3_rows is None:
+        # Human Preference (PickScore Best-of-N, continuous max@N)
+        if pickscore_rows is None:
             data["Human Preference"][n] = None
         else:
-            val, _ = max_at_n(hpsv3_rows, HPSV3_KEY, n)
+            val, _ = max_at_n(pickscore_rows, PICKSCORE_KEY, n)
             data["Human Preference"][n] = val
             if val is None:
-                warnings.append(f"[{method}] drawbench-unique: no '{HPSV3_KEY}' scores at n={n}")
+                warnings.append(f"[{method}] drawbench-unique: no '{PICKSCORE_KEY}' scores at n={n}")
 
     return data, warnings
 
@@ -342,14 +329,9 @@ def main(args):
                     "definition": "WISE Overall = weighted sum over 6 categories of pass@N (CULTURE 0.40, others 0.12)",
                     "full_name": "World Knowledge",
                 },
-                "Visual Text": {
-                    "dataset": ANYTEXT_DATASET, "score_key": ANYTEXT_KEY,
-                    "definition": "AnyText-EN Best-of-N = mean over prompts of max over first N samples of Sen.ACC",
-                    "full_name": "Visual text generation",
-                },
                 "Human Preference": {
-                    "dataset": HPSV3_DATASET, "score_key": HPSV3_KEY,
-                    "definition": "HPSv3 Best-of-N = mean over prompts of max over first N samples",
+                    "dataset": PICKSCORE_DATASET, "score_key": PICKSCORE_KEY,
+                    "definition": "PickScore Best-of-N = mean over prompts of max over first N samples",
                     "full_name": "Human preference alignment",
                 },
             },
@@ -382,8 +364,8 @@ def main(args):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(
-        description="Collect the five capability radar-chart metrics (Object "
-        "Alignment / Dense Prompt / World Knowledge / Visual Text / Human "
+        description="Collect the four capability radar-chart metrics (Object "
+        "Alignment / Dense Prompt / World Knowledge / Human "
         "Preference) as max@N "
         "(Best-of-N) curves for a set of methods, into a single max-of-n.json "
         "for downstream radar plotting."
@@ -402,7 +384,7 @@ if __name__ == "__main__":
     )
     ap.add_argument(
         "--methods", nargs="+", default=DEFAULT_METHODS,
-        help="Method dirs to collect (default: the 6 SD-3.5-M methods).",
+        help="Method dirs to collect (default: the 9 SD-3.5-M methods).",
     )
     ap.add_argument(
         "--n_list", type=int, nargs="+", default=[1, 2, 4, 8, 16, 32],
