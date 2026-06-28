@@ -1070,7 +1070,7 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
         # overall is None (every dim unparseable / all-N-A): leave the row UNSCORED
         # so a resume re-lists it (cheap — raw is cached, only re-parsing runs, no
         # 27B call). Writing None would make _has_metric_score hide it forever.
-        return overall, parsed_by_dim
+        return parsed_by_dim
 
     # Cached rows need no server call: re-derive scores from the cached raw text.
     uncached = []
@@ -1098,20 +1098,20 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
         with tqdm(total=len(uncached), desc="qwen-image-bench") as pbar:
             for i in range(0, len(uncached), chunk_imgs):
                 chunk = uncached[i:i + chunk_imgs]
-                items, owner = [], []          # owner[j] = (row, l1_dim) for items[j]
-                raw_by_row = {id(r): {} for r in chunk}
-                for r in chunk:
+                items, owner = [], []          # owner[j] = (row_idx, l1_dim) for items[j]
+                raw_by_row = [{} for _ in chunk]   # raw_by_row[row_idx] = {l1_dim: out}
+                for row_idx, r in enumerate(chunk):
                     img = load_and_resize_image(r["image_path"])
                     dims_en = (r.get("metadata") or {})["dims_en"]
                     for l1, t in build_tasks(r["prompt"], dims_en, img):
                         items.append(t)
-                        owner.append((r, l1))
+                        owner.append((row_idx, l1))
                 outputs = judge.generate_batch(items)
-                for (r, l1), out in zip(owner, outputs):
-                    raw_by_row[id(r)][l1] = out
-                for r in chunk:
-                    raw_by_dim = raw_by_row[id(r)]
-                    _, parsed_by_dim = _write_scores(r, raw_by_dim)
+                for (row_idx, l1), out in zip(owner, outputs):
+                    raw_by_row[row_idx][l1] = out
+                for row_idx, r in enumerate(chunk):
+                    raw_by_dim = raw_by_row[row_idx]
+                    parsed_by_dim = _write_scores(r, raw_by_dim)
                     _qib_append_raw(raw_path, r, raw_by_dim, parsed_by_dim)
                     pbar.update(1)
 

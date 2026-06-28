@@ -28,18 +28,38 @@ def _image_to_data_url(image):
     return f"data:image/png;base64,{b64}"
 
 
+_IMAGE_MARKER = "<image>"
+
+
 def _build_messages(item):
     """Item {"system_prompt","user_text","image"} -> OpenAI chat messages.
 
-    Image goes first in the user content (conventional VL ordering), followed by
-    the checklist instruction text."""
+    The image is placed at the USER_PROMPT_TEMPLATE's literal "<image>" marker
+    (under "# Generated Image"), not prepended. This matches the official
+    ms-swift judge, which passes images=[img] and lets the template's <image>
+    token be replaced in place (backends/ms_swift_backend.py). We reproduce that
+    mid-prompt placement here by splitting user_text on the marker and
+    interleaving the image between the two text halves. If the marker is absent
+    (unexpected), fall back to image-first ordering.
+    """
+    image_part = {"type": "image_url",
+                  "image_url": {"url": _image_to_data_url(item["image"])}}
+    user_text = item["user_text"]
+
+    if _IMAGE_MARKER in user_text:
+        before, after = user_text.split(_IMAGE_MARKER, 1)
+        content = []
+        if before.strip():
+            content.append({"type": "text", "text": before})
+        content.append(image_part)
+        if after.strip():
+            content.append({"type": "text", "text": after})
+    else:
+        content = [image_part, {"type": "text", "text": user_text}]
+
     return [
         {"role": "system", "content": item["system_prompt"]},
-        {"role": "user", "content": [
-            {"type": "image_url",
-             "image_url": {"url": _image_to_data_url(item["image"])}},
-            {"type": "text", "text": item["user_text"]},
-        ]},
+        {"role": "user", "content": content},
     ]
 
 

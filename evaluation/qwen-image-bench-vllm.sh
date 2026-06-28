@@ -5,9 +5,11 @@
 # http://localhost:8000/v1) and QIB_VLLM_MODEL (default Qwen-Image-Bench).
 # Start this FIRST, wait for "Uvicorn running on http://0.0.0.0:8000", then score.
 #
-# Thinking mode is turned OFF server-side via --default-chat-template-kwargs below
-# (short JSON-only decode = big speedup). For leaderboard parity (thinking ON),
-# drop that flag. The scoring client does not override this per-request.
+# Thinking mode is ON server-side via --default-chat-template-kwargs below, to
+# match the official ms-swift judge (--enable_thinking true) for leaderboard
+# parity. The scoring client does not override this per-request. Thinking ON
+# means longer decodes (lower throughput); flip enable_thinking to false for a
+# faster JSON-only run when leaderboard parity is not required.
 #
 # Throughput: --max-num-seqs 64 + --gpu-memory-utilization 0.90 let the server
 # batch many in-flight requests; set the client's QIB_VLLM_CONCURRENCY to match
@@ -42,4 +44,4 @@ vllm serve /data3/chenweiyan/.cache/modelscope/hub/models/Qwen/Qwen-Image-Bench 
     --mm-processor-cache-gb 0 \
     --enforce-eager \
     --reasoning-parser qwen3 \
-    --default-chat-template-kwargs '{"enable_thinking": false}'
+    --default-chat-template-kwargs '{"enable_thinking": true}'
