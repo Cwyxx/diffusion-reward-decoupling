@@ -101,6 +101,10 @@ _DATASET_LOADERS = {
     "anytext-en":       ("test.jsonl",            _load_jsonl),
     "anytext-zh":       ("test.jsonl",            _load_jsonl),
     "qwen-image-bench": ("prompts.jsonl",         _load_jsonl),
+    # Creative-Generation-only variant: 630 prompts whose dims_en is trimmed to
+    # Creative segments, so the 27B judge scores only that L1 dim (see
+    # dataset/qwen-image-bench-creative/prepare.py).
+    "qwen-image-bench-creative": ("prompts.jsonl", _load_jsonl),
 }
 
 

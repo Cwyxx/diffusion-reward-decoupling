@@ -39,7 +39,7 @@ export TOKENIZERS_PARALLELISM=False
 # ---- Positional args ----
 gpus=${1:?gpus (comma-separated, e.g. 0,1,2,3)}
 method=${2:?method (SD15: base, dpo, kto, spo, smpo, dro, inpo; SDXL: base-sdxl, dpo-sdxl, spo-sdxl, inpo-sdxl, smpo-sdxl; SD-3.5-M: base-sd3, flowgrpo-pickscore-sd3, grpo-guard-sd3, diffusion-dpo-sd3, realalign-sd3, diffusionnft-sd3, civitaialign-sd3, flow-opd-sd3, gardo-pickscore-sd3)}
-dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica, unsafe_mscoco, aigi-detector, anytext-en, anytext-zh, qwen-image-bench)}
+dataset=${3:?dataset (one of: drawbench-unique, ocr, geneval, wise, dpg_bench, spatial_geneval, dalleval_bias, unsafe_template, unsafe_4chan, unsafe_lexica, unsafe_mscoco, aigi-detector, anytext-en, anytext-zh, qwen-image-bench, qwen-image-bench-creative)}
 n_max=${4:?n_max (e.g. 32)}
 
 # ---- Family-aware defaults (derived from method suffix) ----
@@ -97,6 +97,9 @@ case "${dataset}" in
     # Qwen-Image-Bench: 1000 English prompts (prompt_en). Scored by the 27B
     # Q-Judger -> per-image overall(Total) + 5 L1 dims; selection-based BoN.
     qwen-image-bench) metric_list=(qwen-image-bench) ;;
+    # Creative-Generation-only subset (630 prompts, dims_en trimmed to Creative);
+    # same 27B judge metric, which scores only that one L1 dim per the trimmed dims.
+    qwen-image-bench-creative) metric_list=(qwen-image-bench) ;;
     *) echo "Unknown dataset: ${dataset}" >&2; exit 1 ;;
 esac
 
@@ -173,7 +176,7 @@ fi
 # Qwen-Image-Bench judge: the 27B Q-Judger runs on a SEPARATELY launched
 # OpenAI-compatible vLLM server (vllm serve Qwen/Qwen-Image-Bench --served-model-name
 # Qwen-Image-Bench ...). This script is only an HTTP client; start the server first.
-if [[ "${dataset}" == "qwen-image-bench" ]]; then
+if [[ "${dataset}" == qwen-image-bench* ]]; then
     : "${QIB_VLLM_URL:=http://localhost:8000/v1}"
     : "${QIB_VLLM_MODEL:=Qwen-Image-Bench}"
     : "${QIB_VLLM_CONCURRENCY:=64}"
