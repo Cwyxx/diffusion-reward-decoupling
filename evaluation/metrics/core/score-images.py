@@ -995,8 +995,11 @@ def _score_mhsc_in_place(todo_rows):
 # loaded before the loop, so the same (sample_id, seed_index) is never appended
 # twice). Scores are re-derived from the cached raw text each run, so changing
 # the parsing logic takes effect on re-run without re-calling the 27B model.
+# Scoring keeps a continuous pool of QIB_VLLM_CONCURRENCY (default 128) judge
+# requests in flight, refilling one as each completes, so the vLLM server stays
+# saturated instead of stalling on the slowest request of a fixed chunk.
 # Configure the server endpoint via QIB_VLLM_URL (default http://localhost:8000/v1),
-# QIB_VLLM_MODEL (default "Qwen-Image-Bench"), QIB_VLLM_CONCURRENCY (default 8).
+# QIB_VLLM_MODEL (default "Qwen-Image-Bench"), QIB_VLLM_CONCURRENCY (default 128).
 
 _QIB_RAW_FILENAME = "qwen_image_bench_judge_outputs.jsonl"
 
@@ -1047,9 +1050,9 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
     vllm_url = os.environ.get("QIB_VLLM_URL", "http://localhost:8000/v1")
     vllm_model = os.environ.get("QIB_VLLM_MODEL", "Qwen-Image-Bench")
     max_new_tokens = int(os.environ.get("QIB_MAX_NEW_TOKENS", "4096"))
-    concurrency = int(os.environ.get("QIB_VLLM_CONCURRENCY", "8"))
+    pool_size = int(os.environ.get("QIB_VLLM_CONCURRENCY", "128"))
     print(f"[qwen-image-bench] {n} images to score; vllm={vllm_url} "
-          f"model={vllm_model}; concurrency={concurrency}; "
+          f"model={vllm_model}; pool_size={pool_size}; "
           f"raw cache hits available={len(cache)}")
 
     # Fail fast with a clear error before any server call.
@@ -1085,35 +1088,66 @@ def _score_qwen_image_bench_in_place(todo_rows, output_dir):
         from evaluation.benchmarks.QwenImageBench.qwen_image_bench_engine_vllm import (
             QwenImageBenchJudge,
         )  # noqa: E402
-        # Cross-image batching: scoring one image at a time leaves the server's
-        # max-num-seqs slots mostly idle (each image is only <=5 requests). Instead
-        # flatten every image's per-dimension tasks across a chunk and fire them all
-        # concurrently so the vLLM server stays saturated. Chunk size is in IMAGES,
-        # sized to comfortably exceed the client concurrency in tasks while bounding
-        # how many images are held in memory at once.
+        # Continuous task pool: each (image, L1-dim) checklist is one judge request.
+        # Rather than scoring chunk-by-chunk (which stalls on the slowest request in
+        # a chunk before the next chunk starts), keep `pool_size` requests in flight
+        # at all times and refill one as each completes, so the vLLM server never
+        # drains. A row is finalized (scores written + raw cached) only once all of
+        # its dim-requests have returned. The producer loads images lazily, so at
+        # most ~pool_size rows' images are resident at once.
         judge = QwenImageBenchJudge(model_path=vllm_model, base_url=vllm_url,
-                                    max_batch_size=concurrency,
+                                    max_batch_size=pool_size,
                                     max_new_tokens=max_new_tokens)
-        chunk_imgs = max(8, concurrency)
+
+        raw_by_row = [{} for _ in uncached]   # raw_by_row[i] = {l1_dim: out}; None once finalized
+        remaining = [0] * len(uncached)       # outstanding dim-requests per row
+
         with tqdm(total=len(uncached), desc="qwen-image-bench") as pbar:
-            for i in range(0, len(uncached), chunk_imgs):
-                chunk = uncached[i:i + chunk_imgs]
-                items, owner = [], []          # owner[j] = (row_idx, l1_dim) for items[j]
-                raw_by_row = [{} for _ in chunk]   # raw_by_row[row_idx] = {l1_dim: out}
-                for row_idx, r in enumerate(chunk):
+            def finalize_row(row_idx):
+                r = uncached[row_idx]
+                raw_by_dim = raw_by_row[row_idx]
+                parsed_by_dim = _write_scores(r, raw_by_dim)
+                _qib_append_raw(raw_path, r, raw_by_dim, parsed_by_dim)
+                raw_by_row[row_idx] = None     # release the row's images/text
+                pbar.update(1)
+
+            def gen_tasks():
+                # Yields (row_idx, l1_dim, item) lazily; finalizes 0-dim rows inline.
+                for row_idx, r in enumerate(uncached):
                     img = load_and_resize_image(r["image_path"])
                     dims_en = (r.get("metadata") or {})["dims_en"]
-                    for l1, t in build_tasks(r["prompt"], dims_en, img):
-                        items.append(t)
-                        owner.append((row_idx, l1))
-                outputs = judge.generate_batch(items)
-                for (row_idx, l1), out in zip(owner, outputs):
-                    raw_by_row[row_idx][l1] = out
-                for row_idx, r in enumerate(chunk):
-                    raw_by_dim = raw_by_row[row_idx]
-                    parsed_by_dim = _write_scores(r, raw_by_dim)
-                    _qib_append_raw(raw_path, r, raw_by_dim, parsed_by_dim)
-                    pbar.update(1)
+                    row_tasks = list(build_tasks(r["prompt"], dims_en, img))
+                    remaining[row_idx] = len(row_tasks)
+                    if not row_tasks:
+                        finalize_row(row_idx)   # no applicable dims: nothing to judge
+                        continue
+                    for l1, t in row_tasks:
+                        yield row_idx, l1, t
+
+            task_iter = gen_tasks()
+            with concurrent.futures.ThreadPoolExecutor(max_workers=pool_size) as ex:
+                inflight = {}   # future -> (row_idx, l1_dim)
+
+                def submit_next():
+                    for row_idx, l1, item in task_iter:
+                        inflight[ex.submit(judge.generate_one, item)] = (row_idx, l1)
+                        return True
+                    return False  # producer exhausted
+
+                # Prime the pool, then keep it full: refill one request per completion.
+                while len(inflight) < pool_size and submit_next():
+                    pass
+                while inflight:
+                    done, _ = concurrent.futures.wait(
+                        inflight, return_when=concurrent.futures.FIRST_COMPLETED
+                    )
+                    for fut in done:
+                        row_idx, l1 = inflight.pop(fut)
+                        raw_by_row[row_idx][l1] = fut.result()  # raises if engine gave up
+                        remaining[row_idx] -= 1
+                        if remaining[row_idx] == 0:
+                            finalize_row(row_idx)
+                        submit_next()
 
     torch.cuda.empty_cache()
 

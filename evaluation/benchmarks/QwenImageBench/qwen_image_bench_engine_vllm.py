@@ -67,7 +67,7 @@ class QwenImageBenchJudge:
     def __init__(self, model_path="Qwen-Image-Bench",
                  base_url="http://localhost:8000/v1", api_key="EMPTY",
                  max_batch_size=8, max_new_tokens=4096,
-                 timeout=600, max_retries=3):
+                 timeout=1200, max_retries=3):
         # model_path here is the vLLM --served-model-name (NOT a checkpoint dir).
         self.model = model_path
         self.url = base_url.rstrip("/") + "/chat/completions"
@@ -112,6 +112,16 @@ class QwenImageBenchJudge:
             f"vLLM judge request failed after {self.max_retries} attempts: "
             f"{last_err}"
         )
+
+    def generate_one(self, item):
+        """Single-item judge call (one request, with the engine's own retry).
+
+        Item: {"system_prompt": str, "user_text": str, "image": PIL.Image}.
+        Returns the generated text, or None if the server sent message.content=null
+        (e.g. a thinking-mode reply truncated at max_tokens). Lets the caller drive
+        its own continuous concurrency pool instead of the per-batch ThreadPool in
+        generate_batch()."""
+        return self._post_one(item)
 
     def generate_batch(self, items):
         """Each item: {"system_prompt": str, "user_text": str, "image": PIL.Image}.

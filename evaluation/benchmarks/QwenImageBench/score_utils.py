@@ -5,7 +5,16 @@ SCORE_MAP = {0: 0.0, 1: 60.0, 2: 100.0}
 
 
 def extract_json_from_response(response_text):
-    """Extract JSON score object from model output (skip <think> section)."""
+    """Extract JSON score object from model output (skip <think> section).
+
+    Returns None for empty/None input: vLLM can hand back message.content=None
+    (e.g. a thinking-mode reply truncated at max_tokens with no final answer),
+    and that None reaches here both live and from the raw-judgments cache. Treat
+    it like any other unparseable response so the caller skips that dimension
+    instead of crashing on None.rfind().
+    """
+    if not isinstance(response_text, str):
+        return None
     text = response_text
     think_end = text.rfind("</think>")
     if think_end != -1:
